@@ -1,0 +1,16 @@
+[project]
+name = "tigerlite-backend"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "pyiceberg[s3fs,pyarrow]>=0.8.0",
+    "duckdb>=1.1.0",
+    "minio>=7.2.0",
+    "openai>=1.50.0",
+    "sse-starlette>=2.0.0",
+    "pydantic>=2.0.0",
+    "pyarrow>=17.0.0",
+    "pytz>=2024.1",
+]

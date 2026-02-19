@@ -1,0 +1,7 @@
+.env
+node_modules/
+dist/
+__pycache__/
+*.pyc
+.vite/
+web_claude_plan.md 
