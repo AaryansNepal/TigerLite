@@ -15,13 +15,15 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 logger = logging.getLogger(__name__)
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
+GO_INGESTION_URL = os.getenv("GO_INGESTION_URL", "")
+INGEST_URL = GO_INGESTION_URL if GO_INGESTION_URL else BACKEND_URL
 BAD_DEPLOY_DELAY = 60  # seconds before bad deploy starts
 
 
 async def send_event(client: httpx.AsyncClient, event: dict):
     try:
-        resp = await client.post(f"{BACKEND_URL}/ingest", json=event, timeout=5.0)
-        if resp.status_code != 200:
+        resp = await client.post(f"{INGEST_URL}/ingest", json=event, timeout=5.0)
+        if resp.status_code not in (200, 202):
             logger.warning(f"Ingest returned {resp.status_code}")
     except Exception as e:
         logger.error(f"Failed to send event: {e}")

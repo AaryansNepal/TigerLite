@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "tigerlite": {
+      "command": "python",
+      "args": ["server.py"],
+      "cwd": "./mcp-server",
+      "env": {
+        "ICEBERG_REST_URI": "http://localhost:8181",
+        "S3_ENDPOINT": "http://localhost:9000",
+        "AWS_ACCESS_KEY_ID": "admin",
+        "AWS_SECRET_ACCESS_KEY": "password",
+        "AWS_REGION": "us-east-1"
+      }
+    }
+  }
+}

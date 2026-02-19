@@ -69,12 +69,31 @@ services:
       retries: 10
       start_period: 10s
 
+  go-ingestion:
+    build: ./go-ingestion
+    ports:
+      - "8080:8080"
+    environment:
+      BACKEND_URL: http://backend:8000
+      PORT: "8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
   simulator:
     build: ./simulator
     environment:
       BACKEND_URL: http://backend:8000
+      GO_INGESTION_URL: http://go-ingestion:8080
     depends_on:
       backend:
+        condition: service_healthy
+      go-ingestion:
         condition: service_healthy
 
   dashboard:
@@ -84,6 +103,20 @@ services:
     depends_on:
       backend:
         condition: service_healthy
+
+  mcp-server:
+    build: ./mcp-server
+    environment:
+      ICEBERG_REST_URI: http://rest-catalog:8181
+      S3_ENDPOINT: http://minio:9000
+      AWS_ACCESS_KEY_ID: admin
+      AWS_SECRET_ACCESS_KEY: password
+      AWS_REGION: us-east-1
+    depends_on:
+      rest-catalog:
+        condition: service_started
+    profiles:
+      - mcp
 
 volumes:
   minio-data:

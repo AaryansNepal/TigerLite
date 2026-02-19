@@ -55,12 +55,26 @@ for i in $(seq 1 60); do
     sleep 2
 done
 
+# Wait for Go ingestion health
+for i in $(seq 1 30); do
+    if curl -sf http://localhost:8080/health > /dev/null 2>&1; then
+        echo -e "${GREEN}Go ingestion is healthy!${NC}"
+        break
+    fi
+    if [ "$i" -eq 30 ]; then
+        echo -e "${RED}Go ingestion failed to start. Check logs: docker compose logs go-ingestion${NC}"
+        exit 1
+    fi
+    sleep 2
+done
+
 echo ""
 echo -e "${GREEN}${BOLD}All services are running!${NC}"
 echo ""
-echo -e "  ${BOLD}Dashboard:${NC}    http://localhost:5173"
-echo -e "  ${BOLD}Backend API:${NC}  http://localhost:8000"
-echo -e "  ${BOLD}MinIO Console:${NC} http://localhost:9001  (admin/password)"
+echo -e "  ${BOLD}Dashboard:${NC}      http://localhost:5173"
+echo -e "  ${BOLD}Backend API:${NC}    http://localhost:8000"
+echo -e "  ${BOLD}Go Ingestion:${NC}   http://localhost:8080"
+echo -e "  ${BOLD}MinIO Console:${NC}  http://localhost:9001  (admin/password)"
 echo ""
 echo -e "${CYAN}The simulator is now generating telemetry for 10 customers.${NC}"
 echo -e "${CYAN}After ~60 seconds, Wonka Industries will experience a bad deploy.${NC}"
