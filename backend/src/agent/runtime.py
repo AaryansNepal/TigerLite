@@ -4,7 +4,7 @@ Each run_cycle():
 1. Load (or create) the latest snapshot for the session
 2. Replay all previous messages from the object store
 3. Add a trigger message
-4. Call OpenAI GPT-4o with tools in a loop
+4. Call Gemini with tools in a loop
 5. Execute tool calls, store results
 6. Save a new immutable snapshot with all new message hashes
 """
@@ -15,14 +15,15 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
-from ..config import OPENAI_API_KEY, OPENAI_MODEL
+from ..config import GEMINI_API_KEY, GEMINI_MODEL
 from ..query import query_customer_health, run_sql
 from .object_store import ObjectStore
 from .prompts import SYSTEM_PROMPT
 from .snapshot import Snapshot, SnapshotStore
-from .tools import TOOL_DEFINITIONS
+from .tools import TOOL_DECLARATIONS
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +33,7 @@ class AgentRuntime:
         self.catalog = catalog
         self.object_store = ObjectStore()
         self.snapshot_store = SnapshotStore()
-        self.client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
+        self.client = genai.Client(api_key=GEMINI_API_KEY) if GEMINI_API_KEY else None
         self.findings: list[dict] = []
         self._event_callback = None
 
@@ -70,10 +71,44 @@ class AgentRuntime:
 
         return json.dumps({"error": f"Unknown tool: {name}"})
 
+    def _stored_to_content(self, stored_msg: dict) -> types.Content:
+        """Convert a stored message dict back to a Gemini Content object for replay."""
+        role = stored_msg["role"]
+
+        if role == "user":
+            return types.Content(
+                role="user",
+                parts=[types.Part(text=stored_msg["text"])],
+            )
+        elif role == "model":
+            parts = []
+            if stored_msg.get("text"):
+                parts.append(types.Part(text=stored_msg["text"]))
+            for fc in stored_msg.get("function_calls", []):
+                parts.append(types.Part(
+                    function_call=types.FunctionCall(
+                        name=fc["name"], args=fc["args"],
+                    )
+                ))
+            return types.Content(role="model", parts=parts)
+        elif role == "function_response":
+            parts = [
+                types.Part(
+                    function_response=types.FunctionResponse(
+                        name=r["name"], response=r["response"],
+                    )
+                )
+                for r in stored_msg["responses"]
+            ]
+            return types.Content(parts=parts)
+
+        # Fallback
+        return types.Content(role="user", parts=[types.Part(text=str(stored_msg))])
+
     def run_cycle(self, session_id: Optional[str] = None) -> dict:
         """Run one agent investigation cycle."""
         if not self.client:
-            return {"error": "OpenAI API key not configured"}
+            return {"error": "Gemini API key not configured"}
 
         if not session_id:
             session_id = str(uuid.uuid4())
@@ -85,7 +120,6 @@ class AgentRuntime:
         if latest_version is not None:
             parent_snapshot = self.snapshot_store.load(session_id, latest_version)
             parent_version = latest_version
-            # Replay previous messages
             previous_objects = self.snapshot_store.replay(session_id, self.object_store)
         else:
             parent_version = None
@@ -94,73 +128,78 @@ class AgentRuntime:
         base_version = latest_version or 0
         new_descriptors = []
 
-        # Build message history
-        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        # Build contents for Gemini (system instruction is passed separately)
+        contents = []
 
         # Add replayed messages
         for obj in previous_objects:
             if obj.get("type") == "message":
-                messages.append(obj["message"])
+                contents.append(self._stored_to_content(obj["message"]))
 
         # Add trigger message
-        trigger = {
-            "role": "user",
-            "content": (
-                f"Run anomaly detection cycle at {datetime.now(timezone.utc).isoformat()}. "
-                "Investigate all customers for latency anomalies, error rate spikes, "
-                "and deploy-correlated regressions. Be thorough and methodical."
-            ),
-        }
-        messages.append(trigger)
+        trigger_text = (
+            f"Run anomaly detection cycle at {datetime.now(timezone.utc).isoformat()}. "
+            "Investigate all customers for latency anomalies, error rate spikes, "
+            "and deploy-correlated regressions. Be thorough and methodical."
+        )
+        contents.append(types.Content(
+            role="user",
+            parts=[types.Part(text=trigger_text)],
+        ))
 
         # Store trigger
-        sha = self.object_store.put({"type": "message", "message": trigger})
+        sha = self.object_store.put({"type": "message", "message": {"role": "user", "text": trigger_text}})
         new_descriptors.append(sha)
 
-        # OpenAI tool calling loop — save a snapshot after each iteration
+        # Gemini tool calling loop — save a snapshot after each iteration
         max_iterations = 10
         current_version = base_version
         for i in range(max_iterations):
             self._emit("llm_call", {"iteration": i + 1, "session_id": session_id})
 
             try:
-                response = self.client.chat.completions.create(
-                    model=OPENAI_MODEL,
-                    messages=messages,
-                    tools=TOOL_DEFINITIONS,
-                    tool_choice="auto",
+                response = self.client.models.generate_content(
+                    model=GEMINI_MODEL,
+                    contents=contents,
+                    config=types.GenerateContentConfig(
+                        system_instruction=SYSTEM_PROMPT,
+                        tools=[TOOL_DECLARATIONS],
+                    ),
                 )
             except Exception as e:
-                logger.error(f"OpenAI API error: {e}")
+                logger.error(f"Gemini API error: {e}")
                 self._emit("error", {"message": str(e)})
                 break
 
-            choice = response.choices[0]
-            assistant_message = choice.message
+            candidate = response.candidates[0]
+            model_content = candidate.content
 
-            # Store assistant message
-            msg_dict = {"role": "assistant", "content": assistant_message.content or ""}
-            if assistant_message.tool_calls:
-                msg_dict["tool_calls"] = [
-                    {
-                        "id": tc.id,
-                        "type": "function",
-                        "function": {
-                            "name": tc.function.name,
-                            "arguments": tc.function.arguments,
-                        },
-                    }
-                    for tc in assistant_message.tool_calls
+            # Parse response: extract text and function calls
+            function_calls = []
+            text_parts = []
+            for part in model_content.parts:
+                if part.function_call:
+                    function_calls.append(part.function_call)
+                if part.text:
+                    text_parts.append(part.text)
+
+            text_content = " ".join(text_parts) if text_parts else ""
+
+            # Store model message for snapshot
+            stored_msg = {"role": "model", "text": text_content}
+            if function_calls:
+                stored_msg["function_calls"] = [
+                    {"name": fc.name, "args": dict(fc.args)} for fc in function_calls
                 ]
 
-            sha = self.object_store.put({"type": "message", "message": msg_dict})
+            sha = self.object_store.put({"type": "message", "message": stored_msg})
             new_descriptors.append(sha)
-            messages.append(msg_dict)
+            contents.append(model_content)
 
             # If no tool calls, agent is done — save final snapshot
-            if not assistant_message.tool_calls:
-                if assistant_message.content:
-                    self._emit("agent_message", {"content": assistant_message.content})
+            if not function_calls:
+                if text_content:
+                    self._emit("agent_message", {"content": text_content})
                 current_version += 1
                 snapshot = Snapshot(
                     session_id=session_id,
@@ -176,22 +215,35 @@ class AgentRuntime:
                 self.snapshot_store.save(snapshot)
                 break
 
-            # Execute tool calls
-            for tool_call in assistant_message.tool_calls:
-                fn_name = tool_call.function.name
-                fn_args = json.loads(tool_call.function.arguments)
-
+            # Execute tool calls and build function response
+            fn_response_parts = []
+            stored_responses = []
+            for fc in function_calls:
+                fn_name = fc.name
+                fn_args = dict(fc.args)
                 logger.info(f"Executing tool: {fn_name}")
-                result = self._execute_tool(fn_name, fn_args)
+                result_str = self._execute_tool(fn_name, fn_args)
 
-                tool_msg = {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": result,
-                }
-                sha = self.object_store.put({"type": "message", "message": tool_msg})
-                new_descriptors.append(sha)
-                messages.append(tool_msg)
+                fn_response_parts.append(types.Part(
+                    function_response=types.FunctionResponse(
+                        name=fn_name,
+                        response={"result": result_str},
+                    )
+                ))
+                stored_responses.append({
+                    "name": fn_name,
+                    "response": {"result": result_str},
+                })
+
+            # Store function responses for snapshot
+            sha = self.object_store.put({
+                "type": "message",
+                "message": {"role": "function_response", "responses": stored_responses},
+            })
+            new_descriptors.append(sha)
+
+            # Add function responses to conversation
+            contents.append(types.Content(parts=fn_response_parts))
 
             # Save intermediate snapshot after this reasoning step
             current_version += 1

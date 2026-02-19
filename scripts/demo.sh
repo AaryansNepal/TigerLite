@@ -27,7 +27,7 @@ if [ ! -f .env ]; then
     if [ -f .env.example ]; then
         echo -e "${YELLOW}No .env file found. Creating from .env.example...${NC}"
         cp .env.example .env
-        echo -e "${YELLOW}Please set your OPENAI_API_KEY in .env${NC}"
+        echo -e "${YELLOW}Please set your GEMINI_API_KEY in .env${NC}"
     fi
 fi
 

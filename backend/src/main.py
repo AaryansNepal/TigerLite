@@ -7,7 +7,7 @@ from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from sse_starlette.sse import EventSourceResponse
 
-from .config import AGENT_CYCLE_INTERVAL, OPENAI_API_KEY
+from .config import AGENT_CYCLE_INTERVAL, GEMINI_API_KEY
 from .events import event_bus
 from .iceberg_writer import connect_catalog, ensure_events_table
 from .ingestion import EventBuffer, event_buffer, periodic_flush
@@ -66,7 +66,7 @@ async def agent_background_loop():
     await asyncio.sleep(AGENT_CYCLE_INTERVAL)
 
     while True:
-        if OPENAI_API_KEY and not agent_running:
+        if GEMINI_API_KEY and not agent_running:
             try:
                 agent_running = True
                 event_bus.publish("agent:status", {"status": "running"})
@@ -141,8 +141,8 @@ async def recent_telemetry(limit: int = 50):
 @app.post("/api/agent/run")
 async def trigger_agent_run(background_tasks: BackgroundTasks):
     global agent_running
-    if not OPENAI_API_KEY:
-        return {"error": "OpenAI API key not configured"}
+    if not GEMINI_API_KEY:
+        return {"error": "Gemini API key not configured"}
     if agent_running:
         return {"error": "Agent is already running"}
 
