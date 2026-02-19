@@ -1,9 +1,8 @@
 {
   "mcpServers": {
     "tigerlite": {
-      "command": "python",
-      "args": ["server.py"],
-      "cwd": "./mcp-server",
+      "command": "/Users/aaryansnepal/Documents/FireTiger/mcp-server/.venv/bin/python3",
+      "args": ["/Users/aaryansnepal/Documents/FireTiger/mcp-server/server.py"],
       "env": {
         "ICEBERG_REST_URI": "http://localhost:8181",
         "S3_ENDPOINT": "http://localhost:9000",

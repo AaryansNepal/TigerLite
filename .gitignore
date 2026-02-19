@@ -10,3 +10,6 @@ EXTRAS.md
 # Go build artifacts
 go-ingestion/ingestion
 *.exe
+
+# Python virtual environments
+.venv/
