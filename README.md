@@ -133,7 +133,7 @@ FireTiger/
 └── README.md
 ```
 
-## Demo Flow (3-5 minutes)
+## Work Flow
 
 1. `docker compose up` — all services start, Go ingestion accepts traffic on :8080
 2. Dashboard shows live telemetry, all 10 customers green
@@ -203,6 +203,9 @@ The MCP server exposes TigerLite's Iceberg data lake to Claude Desktop (or any M
 ## What I'd Add Next
 
 **Claude Code integration** — agent finds the bug, generates a PR to fix it, closes the detect→fix loop
+
 **Long-horizon agents** — continuous monitoring with persistent memory across sessions, not single investigation cycles
+
 **Agent branching** — parallel investigation paths that fork from a snapshot, explore different hypotheses, merge results
+
 **Customer knowledge graph** — agents learn per-customer baselines over days/weeks, detect subtle drift that thresholds miss
