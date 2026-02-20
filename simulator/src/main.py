@@ -5,11 +5,7 @@ import time
 
 import httpx
 
-from .scenarios import (
-    BAD_DEPLOY,
-    generate_bad_deploy_event,
-    generate_normal_event,
-)
+from .scenarios import generate_batch, reset
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -17,7 +13,7 @@ logger = logging.getLogger(__name__)
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 GO_INGESTION_URL = os.getenv("GO_INGESTION_URL", "")
 INGEST_URL = GO_INGESTION_URL if GO_INGESTION_URL else BACKEND_URL
-BAD_DEPLOY_DELAY = 60  # seconds before bad deploy starts
+BAD_DEPLOY_DELAY = int(os.getenv("BAD_DEPLOY_DELAY", "60"))
 
 
 async def send_event(client: httpx.AsyncClient, event: dict):
@@ -30,54 +26,42 @@ async def send_event(client: httpx.AsyncClient, event: dict):
 
 
 async def run_simulator():
-    start_time = time.time()
-    bad_deploy_active = False
+    start = time.time()
+    bad_deploy = False
+    total = 0
+    reset()
 
     async with httpx.AsyncClient() as client:
-        # Wait for backend to be ready
-        for _ in range(30):
+        # Wait for backend
+        for attempt in range(30):
             try:
-                resp = await client.get(f"{BACKEND_URL}/health", timeout=2.0)
-                if resp.status_code == 200:
+                r = await client.get(f"{BACKEND_URL}/health", timeout=2.0)
+                if r.status_code == 200:
                     break
             except Exception:
                 pass
             await asyncio.sleep(2)
 
-        logger.info("Simulator started - generating normal traffic")
+        logger.info(f"Simulator started — bad deploy in {BAD_DEPLOY_DELAY}s")
 
         while True:
-            elapsed = time.time() - start_time
+            elapsed = time.time() - start
 
-            if elapsed > BAD_DEPLOY_DELAY and not bad_deploy_active:
-                bad_deploy_active = True
-                logger.info(
-                    f"BAD DEPLOY triggered after {int(elapsed)}s "
-                    "- Wonka Industries will degrade"
-                )
-                # Notify backend about the bad deploy
+            if elapsed > BAD_DEPLOY_DELAY and not bad_deploy:
+                bad_deploy = True
+                logger.info("══ BAD DEPLOY v1.2.4 ROLLED OUT ══")
                 try:
-                    await client.post(
-                        f"{BACKEND_URL}/api/scenario/trigger-bad-deploy",
-                        timeout=5.0,
-                    )
+                    await client.post(f"{BACKEND_URL}/api/scenario/trigger-bad-deploy", timeout=5.0)
                 except Exception:
                     pass
 
-            # Generate 3-8 events per batch
-            deploy_version = BAD_DEPLOY if bad_deploy_active else "v1.2.3"
-            batch_size = 5
+            batch = generate_batch(bad_deploy_active=bad_deploy)
+            await asyncio.gather(*[send_event(client, e) for e in batch])
+            total += len(batch)
 
-            tasks = []
-            for _ in range(batch_size):
-                if bad_deploy_active and time.time() % 3 < 1:
-                    # ~1/3 of events are Wonka bad deploy events
-                    event = generate_bad_deploy_event()
-                else:
-                    event = generate_normal_event(deploy_version)
-                tasks.append(send_event(client, event))
+            if int(elapsed) % 30 == 0 and int(elapsed) > 0:
+                logger.info(f"{'[BAD]' if bad_deploy else '[OK]'} {total} events sent ({elapsed:.0f}s)")
 
-            await asyncio.gather(*tasks)
             await asyncio.sleep(1)
 
 

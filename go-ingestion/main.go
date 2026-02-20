@@ -20,7 +20,10 @@ func main() {
 	batcher := NewBatcher(backendURL)
 	go batcher.Run()
 
-	handler := NewHandler(batcher)
+	detector := NewDetector(backendURL)
+	go detector.Run()
+
+	handler := NewHandler(batcher, detector)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /ingest", handler.Ingest)

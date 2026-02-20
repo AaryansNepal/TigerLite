@@ -1,13 +1,16 @@
 import asyncio
 import logging
+import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from typing import Optional
 
 from fastapi import FastAPI, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from .config import AGENT_CYCLE_INTERVAL, GEMINI_API_KEY
+from .config import GEMINI_API_KEY
 from .events import event_bus
 from .iceberg_writer import connect_catalog, ensure_events_table
 from .ingestion import EventBuffer, event_buffer, periodic_flush
@@ -31,15 +34,12 @@ agent_running = False
 async def lifespan(app: FastAPI):
     global catalog, iceberg_table, agent_runtime
 
-    # Connect to Iceberg catalog with retries
     logger.info("Connecting to Iceberg REST catalog...")
     catalog = connect_catalog(max_retries=15, delay=2.0)
     iceberg_table = ensure_events_table(catalog)
 
-    # Configure the event buffer
     event_buffer.set_table(iceberg_table)
 
-    # Initialize agent runtime
     agent_runtime = AgentRuntime(catalog)
 
     def agent_event_callback(event_type: str, data: dict):
@@ -47,39 +47,14 @@ async def lifespan(app: FastAPI):
 
     agent_runtime.set_event_callback(agent_event_callback)
 
-    # Start background tasks
+    # Start background flush only — agent is triggered by Go detector or manually
     flush_task = asyncio.create_task(periodic_flush(event_buffer))
-    agent_task = asyncio.create_task(agent_background_loop())
 
     logger.info("TigerLite backend started")
     yield
 
     flush_task.cancel()
-    agent_task.cancel()
     logger.info("TigerLite backend shutting down")
-
-
-async def agent_background_loop():
-    """Run the agent every AGENT_CYCLE_INTERVAL seconds."""
-    global agent_running
-    # Wait for some data to accumulate before first agent run
-    await asyncio.sleep(AGENT_CYCLE_INTERVAL)
-
-    while True:
-        if GEMINI_API_KEY and not agent_running:
-            try:
-                agent_running = True
-                event_bus.publish("agent:status", {"status": "running"})
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(None, agent_runtime.run_cycle)
-                event_bus.publish("agent:status", {"status": "idle", "last_result": result})
-            except Exception as e:
-                logger.error(f"Agent cycle error: {e}")
-                event_bus.publish("agent:status", {"status": "error", "error": str(e)})
-            finally:
-                agent_running = False
-
-        await asyncio.sleep(AGENT_CYCLE_INTERVAL)
 
 
 app = FastAPI(title="TigerLite", version="0.1.0", lifespan=lifespan)
@@ -138,29 +113,66 @@ async def recent_telemetry(limit: int = 50):
 
 # --- Agent ---
 
+class AgentTriggerRequest(BaseModel):
+    customer_id: Optional[str] = None
+    trigger: Optional[str] = None
+    reason: Optional[str] = None
+    error_rate: Optional[float] = None
+    avg_latency: Optional[float] = None
+
+
 @app.post("/api/agent/run")
-async def trigger_agent_run(background_tasks: BackgroundTasks):
+async def trigger_agent_run(
+    request: AgentTriggerRequest,
+    background_tasks: BackgroundTasks,
+):
     global agent_running
     if not GEMINI_API_KEY:
         return {"error": "Gemini API key not configured"}
     if agent_running:
-        return {"error": "Agent is already running"}
+        return {"error": "Agent is already running", "retry_after": 30}
+
+    session_id = str(uuid.uuid4())
+
+    # Capture request data for the background task
+    customer_id = request.customer_id
+    reason = request.reason or request.trigger or "manual"
+    error_rate = request.error_rate
+    avg_latency = request.avg_latency
+
+    trigger_source = "auto (Go detector)" if request.trigger == "auto" else "manual"
+    logger.info(f"Agent triggered: {trigger_source} | customer={customer_id} | session={session_id}")
 
     def run():
         global agent_running
         try:
             agent_running = True
-            event_bus.publish("agent:status", {"status": "running"})
-            result = agent_runtime.run_cycle()
+            event_bus.publish("agent:status", {
+                "status": "running",
+                "session_id": session_id,
+                "customer_id": customer_id,
+            })
+            result = agent_runtime.run_cycle(
+                session_id=session_id,
+                customer_id=customer_id,
+                reason=reason,
+                error_rate=error_rate,
+                avg_latency=avg_latency,
+            )
             event_bus.publish("agent:status", {"status": "idle", "last_result": result})
         except Exception as e:
-            logger.error(f"Manual agent run error: {e}")
+            logger.error(f"Agent run error: {e}")
             event_bus.publish("agent:status", {"status": "error", "error": str(e)})
         finally:
             agent_running = False
 
     background_tasks.add_task(run)
-    return {"status": "agent_triggered"}
+    return {
+        "status": "agent_triggered",
+        "session_id": session_id,
+        "customer_id": customer_id,
+        "trigger": trigger_source,
+    }
 
 
 @app.get("/api/findings")
@@ -183,7 +195,6 @@ async def get_snapshot(session_id: str, version: int):
     from .agent.object_store import ObjectStore
     obj_store = ObjectStore()
     snapshot = store.load(session_id, version)
-    # Resolve descriptors to actual objects
     objects = [obj_store.get(sha) for sha in snapshot.descriptors]
     return {"snapshot": snapshot.to_dict(), "objects": objects}
 

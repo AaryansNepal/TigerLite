@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { usePolling } from '../hooks/usePolling'
 import { getSessions, getSessionSnapshots, getSnapshot } from '../lib/api'
 
-export default function SnapshotTimeline() {
+export default function SnapshotTimeline({ forceSessionId }) {
   const { data: sessionsData } = usePolling(getSessions, 5000)
   const [selectedSession, setSelectedSession] = useState(null)
   const [snapshots, setSnapshots] = useState([])
@@ -11,12 +11,25 @@ export default function SnapshotTimeline() {
 
   const sessions = sessionsData?.sessions ?? []
 
-  // Auto-select first session
+  // Force-select session when triggered from Run Agent button
   useEffect(() => {
-    if (sessions.length > 0 && !selectedSession) {
-      setSelectedSession(sessions[sessions.length - 1])
+    if (forceSessionId) {
+      setSelectedSession(forceSessionId)
+      setExpandedVersion(null)
+      setVersionObjects({})
     }
-  }, [sessions, selectedSession])
+  }, [forceSessionId])
+
+  // Auto-select latest session, preserve manual selection
+  useEffect(() => {
+    if (sessions.length > 0) {
+      const latest = sessions[sessions.length - 1]
+      setSelectedSession(prev => {
+        if (!prev || !sessions.includes(prev) || prev === latest) return latest
+        return prev
+      })
+    }
+  }, [sessions])
 
   // Load snapshots when session changes
   useEffect(() => {
@@ -111,37 +124,60 @@ export default function SnapshotTimeline() {
 
                 {expandedVersion === snap.version && versionObjects[snap.version] && (
                   <div className="ml-2 mt-2 space-y-2">
-                    {versionObjects[snap.version].map((obj, i) => (
-                      <div key={i} className="bg-gray-800/50 rounded p-2 text-xs">
-                        {obj.type === 'message' ? (
-                          <div>
-                            <span className={`font-bold ${
-                              obj.message?.role === 'assistant' ? 'text-blue-400' :
-                              obj.message?.role === 'tool' ? 'text-green-400' :
-                              'text-gray-400'
-                            }`}>
-                              {obj.message?.role}
-                            </span>
-                            {obj.message?.content && (
-                              <pre className="mt-1 text-gray-400 font-mono whitespace-pre-wrap break-words max-h-32 overflow-auto">
-                                {typeof obj.message.content === 'string'
-                                  ? obj.message.content.slice(0, 500)
-                                  : JSON.stringify(obj.message.content, null, 2).slice(0, 500)}
-                              </pre>
-                            )}
-                            {obj.message?.tool_calls && (
-                              <div className="mt-1 text-yellow-400">
-                                Tools: {obj.message.tool_calls.map(tc => tc.function?.name).join(', ')}
-                              </div>
-                            )}
-                          </div>
-                        ) : (
-                          <pre className="font-mono text-gray-400 whitespace-pre-wrap">
-                            {JSON.stringify(obj, null, 2).slice(0, 300)}
-                          </pre>
-                        )}
-                      </div>
-                    ))}
+                    {versionObjects[snap.version].map((obj, i) => {
+                      const msg = obj.message
+                      const role = msg?.role
+                      // Support both OpenAI format (content, tool_calls) and Gemini format (text, function_calls)
+                      const textContent = msg?.content || msg?.text || ''
+                      const toolCalls = msg?.tool_calls || msg?.function_calls
+                      const fnResponses = msg?.responses
+
+                      return (
+                        <div key={i} className="bg-gray-800/50 rounded p-2 text-xs">
+                          {obj.type === 'message' ? (
+                            <div>
+                              <span className={`font-bold ${
+                                role === 'assistant' || role === 'model' ? 'text-blue-400' :
+                                role === 'tool' || role === 'function_response' ? 'text-green-400' :
+                                'text-gray-400'
+                              }`}>
+                                {role}
+                              </span>
+                              {textContent && (
+                                <pre className="mt-1 text-gray-400 font-mono whitespace-pre-wrap break-words max-h-32 overflow-auto">
+                                  {typeof textContent === 'string'
+                                    ? textContent.slice(0, 500)
+                                    : JSON.stringify(textContent, null, 2).slice(0, 500)}
+                                </pre>
+                              )}
+                              {toolCalls && (
+                                <div className="mt-1 text-yellow-400">
+                                  Tools: {toolCalls.map(tc => tc.function?.name || tc.name).join(', ')}
+                                </div>
+                              )}
+                              {fnResponses && (
+                                <div className="mt-1 space-y-1">
+                                  {fnResponses.map((r, j) => (
+                                    <div key={j}>
+                                      <span className="text-green-400 font-bold">{r.name}</span>
+                                      <pre className="mt-0.5 text-gray-500 font-mono whitespace-pre-wrap break-words max-h-24 overflow-auto">
+                                        {typeof r.response?.result === 'string'
+                                          ? r.response.result.slice(0, 400)
+                                          : JSON.stringify(r.response, null, 2).slice(0, 400)}
+                                      </pre>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          ) : (
+                            <pre className="font-mono text-gray-400 whitespace-pre-wrap">
+                              {JSON.stringify(obj, null, 2).slice(0, 300)}
+                            </pre>
+                          )}
+                        </div>
+                      )
+                    })}
                   </div>
                 )}
               </div>

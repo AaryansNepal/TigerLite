@@ -7,6 +7,7 @@ connecting directly to the Iceberg REST catalog and MinIO object store.
 
 import json
 import os
+import re
 from datetime import datetime
 
 import duckdb
@@ -72,15 +73,10 @@ def _run_query(sql: str) -> str:
         metadata_path = _resolve_metadata_path()
 
         # Same FROM events -> iceberg_scan() replacement as backend/src/query.py
-        modified_sql = sql.replace(
-            "FROM events", f"FROM iceberg_scan('{metadata_path}')"
-        ).replace(
-            "from events", f"FROM iceberg_scan('{metadata_path}')"
-        ).replace(
-            "JOIN events", f"JOIN iceberg_scan('{metadata_path}')"
-        ).replace(
-            "join events", f"JOIN iceberg_scan('{metadata_path}')"
-        )
+        # Use regex to handle any whitespace (newlines, indentation) between keyword and table name
+        scan = f"FROM iceberg_scan('{metadata_path}')"
+        modified_sql = re.sub(r'\bFROM\s+events\b', scan, sql, flags=re.IGNORECASE)
+        modified_sql = re.sub(r'\bJOIN\s+events\b', scan.replace('FROM', 'JOIN'), modified_sql, flags=re.IGNORECASE)
 
         conn = _get_duckdb_connection()
         result = conn.execute(modified_sql)

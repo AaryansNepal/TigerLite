@@ -1,5 +1,6 @@
 import logging
-from contextlib import contextmanager
+import re
+from typing import Optional
 
 import duckdb
 
@@ -7,13 +8,20 @@ from .config import AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_ENDPOINT
 
 logger = logging.getLogger(__name__)
 
+# Module-level connection — reused across queries, extensions loaded once
+_conn: Optional[duckdb.DuckDBPyConnection] = None
+
 
 def get_duckdb_connection() -> duckdb.DuckDBPyConnection:
-    """Create a DuckDB connection configured for Iceberg via S3."""
-    conn = duckdb.connect()
-    conn.execute("INSTALL iceberg; LOAD iceberg;")
-    conn.execute("INSTALL httpfs; LOAD httpfs;")
-    conn.execute(f"""
+    """Get or create the module-level DuckDB connection."""
+    global _conn
+    if _conn is not None:
+        return _conn
+
+    _conn = duckdb.connect()
+    _conn.execute("INSTALL iceberg; LOAD iceberg;")
+    _conn.execute("INSTALL httpfs; LOAD httpfs;")
+    _conn.execute(f"""
         SET s3_endpoint = '{S3_ENDPOINT.replace("http://", "")}';
         SET s3_access_key_id = '{AWS_ACCESS_KEY_ID}';
         SET s3_secret_access_key = '{AWS_SECRET_ACCESS_KEY}';
@@ -21,7 +29,7 @@ def get_duckdb_connection() -> duckdb.DuckDBPyConnection:
         SET s3_url_style = 'path';
         SET s3_use_ssl = false;
     """)
-    return conn
+    return _conn
 
 
 def _resolve_metadata_path(catalog) -> str:
@@ -88,29 +96,55 @@ def query_recent_telemetry(catalog, limit: int = 50) -> list[dict]:
         return []
 
 
-def run_sql(catalog, sql: str) -> list[dict]:
-    """Run arbitrary SQL against the events Iceberg table.
+# SQL statements the agent is allowed to use
+_ALLOWED_STATEMENTS = {"SELECT", "WITH"}
 
-    Replaces any reference to 'events' table with iceberg_scan().
+# Hard limit on rows returned to the agent
+_MAX_AGENT_ROWS = 500
+
+
+def run_sql(catalog, sql: str) -> list[dict]:
+    """Run agent-generated SQL against the events Iceberg table.
+
+    - Only SELECT/WITH statements allowed
+    - Table name 'events' is replaced with iceberg_scan()
+    - Results capped at _MAX_AGENT_ROWS
     """
+    sql = sql.strip().rstrip(";")
+
+    # Safety: only allow read queries
+    first_keyword = sql.split()[0].upper() if sql.split() else ""
+    if first_keyword not in _ALLOWED_STATEMENTS:
+        return [{"error": f"Only SELECT queries are allowed, got: {first_keyword}"}]
+
     try:
         metadata_path = _resolve_metadata_path(catalog)
-        # Replace table references with iceberg_scan
-        modified_sql = sql.replace(
-            "FROM events", f"FROM iceberg_scan('{metadata_path}')"
-        ).replace(
-            "from events", f"FROM iceberg_scan('{metadata_path}')"
-        ).replace(
-            "JOIN events", f"JOIN iceberg_scan('{metadata_path}')"
-        ).replace(
-            "join events", f"JOIN iceberg_scan('{metadata_path}')"
+
+        # Replace table references: FROM events, JOIN events, FROM "events"
+        scan_expr = f"iceberg_scan('{metadata_path}')"
+        modified_sql = re.sub(
+            r'\bFROM\s+["\']?events["\']?\b',
+            f"FROM {scan_expr}",
+            sql,
+            flags=re.IGNORECASE,
         )
+        modified_sql = re.sub(
+            r'\bJOIN\s+["\']?events["\']?\b',
+            f"JOIN {scan_expr}",
+            modified_sql,
+            flags=re.IGNORECASE,
+        )
+
+        # Enforce row limit if query doesn't already have one
+        if not re.search(r'\bLIMIT\s+\d+', modified_sql, flags=re.IGNORECASE):
+            modified_sql += f" LIMIT {_MAX_AGENT_ROWS}"
 
         conn = get_duckdb_connection()
         result = conn.execute(modified_sql)
         columns = [desc[0] for desc in result.description]
-        rows = result.fetchall()
+        rows = result.fetchmany(_MAX_AGENT_ROWS)
         return [dict(zip(columns, row)) for row in rows]
+
     except Exception as e:
-        logger.error(f"SQL query failed: {e}")
+        logger.error(f"Agent SQL query failed: {e}")
         return [{"error": str(e)}]

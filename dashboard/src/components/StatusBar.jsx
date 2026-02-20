@@ -1,7 +1,7 @@
 import { usePolling } from '../hooks/usePolling'
 import { getScenarioStatus, triggerBadDeploy, triggerAgent } from '../lib/api'
 
-export default function StatusBar() {
+export default function StatusBar({ onAgentStarted }) {
   const { data } = usePolling(getScenarioStatus, 2000)
 
   return (
@@ -47,7 +47,10 @@ export default function StatusBar() {
         </button>
 
         <button
-          onClick={triggerAgent}
+          onClick={async () => {
+            const result = await triggerAgent()
+            if (result.session_id) onAgentStarted?.(result.session_id)
+          }}
           disabled={data?.agent_running}
           className="px-3 py-1 bg-blue-900/50 hover:bg-blue-800/50 disabled:opacity-30 disabled:cursor-not-allowed text-blue-300 rounded text-xs font-medium border border-blue-800/50 transition-colors"
         >

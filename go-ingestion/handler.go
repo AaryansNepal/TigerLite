@@ -20,19 +20,18 @@ type TelemetryEvent struct {
 	LatencyMs     float64 `json:"latency_ms"`
 	DeployVersion string  `json:"deploy_version"`
 	Region        string  `json:"region"`
-	ErrorMessage  *string `json:"error_message"` // nullable, matches Optional[str]
+	ErrorMessage  *string `json:"error_message"`
 }
 
-// Handler holds references needed by HTTP handlers.
 type Handler struct {
-	batcher *Batcher
+	batcher  *Batcher
+	detector *Detector
 }
 
-func NewHandler(b *Batcher) *Handler {
-	return &Handler{batcher: b}
+func NewHandler(b *Batcher, d *Detector) *Handler {
+	return &Handler{batcher: b, detector: d}
 }
 
-// validate checks that required fields are present.
 func (e *TelemetryEvent) validate() error {
 	var missing []string
 	if e.Timestamp == "" {
@@ -62,7 +61,6 @@ func (e *TelemetryEvent) validate() error {
 	return nil
 }
 
-// Ingest accepts a single telemetry event and queues it for batching.
 func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 	var event TelemetryEvent
 	if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
@@ -75,20 +73,22 @@ func (h *Handler) Ingest(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Job A: queue for Iceberg storage
 	h.batcher.Submit(event)
+
+	// Job B: feed the anomaly detector
+	h.detector.Observe(event)
 
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)
 	fmt.Fprintf(w, `{"status":"accepted","timestamp":"%s"}`, time.Now().UTC().Format(time.RFC3339))
 }
 
-// Health is a simple liveness check.
 func (h *Handler) Health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	fmt.Fprint(w, `{"status":"ok","service":"go-ingestion"}`)
 }
 
-// Metrics returns basic throughput counters.
 func (h *Handler) Metrics(w http.ResponseWriter, r *http.Request) {
 	received, flushed, errors := h.batcher.Stats()
 	w.Header().Set("Content-Type", "application/json")

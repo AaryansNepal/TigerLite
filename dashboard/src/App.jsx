@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import StatusBar from './components/StatusBar'
 import CustomerHealthTable from './components/CustomerHealthTable'
 import LatencyChart from './components/LatencyChart'
@@ -6,9 +7,11 @@ import SnapshotTimeline from './components/SnapshotTimeline'
 import LiveEventFeed from './components/LiveEventFeed'
 
 export default function App() {
+  const [forceSessionId, setForceSessionId] = useState(null)
+
   return (
     <div className="h-screen flex flex-col overflow-hidden">
-      <StatusBar />
+      <StatusBar onAgentStarted={setForceSessionId} />
 
       <div className="flex-1 p-4 grid grid-cols-3 grid-rows-2 gap-4 min-h-0">
         {/* Row 1 */}
@@ -24,7 +27,7 @@ export default function App() {
           <LatencyChart />
         </div>
         <div>
-          <SnapshotTimeline />
+          <SnapshotTimeline forceSessionId={forceSessionId} />
         </div>
         <div>
           <LiveEventFeed />
