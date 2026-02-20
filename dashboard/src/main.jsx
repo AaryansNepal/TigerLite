@@ -1,3 +1,5 @@
+/** Entrypoint — mounts the React app in StrictMode. */
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import App from './App'

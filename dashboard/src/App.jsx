@@ -1,3 +1,11 @@
+/**
+ * App — root layout with 3x2 grid dashboard.
+ *
+ * StatusBar on top, then a 3-column × 2-row grid:
+ *   Row 1: CustomerHealthTable (2 cols) | AgentFindingsList
+ *   Row 2: LatencyChart | SnapshotTimeline | LiveEventFeed
+ */
+
 import { useState } from 'react'
 import StatusBar from '@/components/StatusBar'
 import CustomerHealthTable from '@/components/CustomerHealthTable'

@@ -1,3 +1,11 @@
+/**
+ * LiveEventFeed — real-time SSE stream of telemetry and agent events.
+ *
+ * Events are color-coded by type (telemetry, agent tool calls, findings, etc.).
+ * Agent events are indented with a left border for visual grouping.
+ * Supports pause/resume and clear via header buttons.
+ */
+
 import { useSSE } from '@/hooks/useSSE'
 import { getSSEUrl } from '@/lib/api'
 import Panel from '@/components/Panel'

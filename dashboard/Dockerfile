@@ -1,3 +1,4 @@
+# Dashboard — multi-stage build: Vite → nginx with API proxy
 FROM node:20-slim AS build
 
 WORKDIR /app

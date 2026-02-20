@@ -1,3 +1,10 @@
+/**
+ * API client — all backend communication goes through here.
+ *
+ * Proxied via Vite dev server (dev) or nginx (prod) so no CORS issues.
+ * Every function returns parsed JSON or throws on non-2xx status.
+ */
+
 const API_BASE = import.meta.env.VITE_API_URL || ''
 
 async function fetchJSON(path) {
@@ -8,10 +15,6 @@ async function fetchJSON(path) {
 
 export async function getCustomerHealth() {
   return fetchJSON('/api/customer-health')
-}
-
-export async function getRecentTelemetry(limit = 50) {
-  return fetchJSON(`/api/telemetry/recent?limit=${limit}`)
 }
 
 export async function getFindings() {

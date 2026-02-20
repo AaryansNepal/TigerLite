@@ -1,3 +1,4 @@
+# MCP tool server — exposes Iceberg data lake to Claude Desktop via stdio
 FROM python:3.11-slim
 WORKDIR /app
 COPY pyproject.toml .

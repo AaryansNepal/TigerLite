@@ -1,6 +1,14 @@
+"""Event buffer — batches incoming telemetry before flushing to Iceberg.
+
+Events accumulate in memory and flush on two conditions:
+  1. Buffer hits FLUSH_BATCH_SIZE (100 events)
+  2. periodic_flush() fires every FLUSH_INTERVAL_SECONDS (5s)
+On flush failure, events are prepended back to the buffer for retry.
+"""
+
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import timezone
 
 from .config import FLUSH_BATCH_SIZE, FLUSH_INTERVAL_SECONDS
 from .schema import TelemetryEvent

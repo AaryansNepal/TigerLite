@@ -1,3 +1,11 @@
+/**
+ * Stale-while-revalidate polling hook.
+ *
+ * Key behavior: data is never cleared during refresh. Old data stays visible
+ * while new data loads in the background. isFirstLoad is true only before the
+ * very first successful fetch, so skeleton loaders only show once.
+ */
+
 import { useState, useEffect, useCallback, useRef } from 'react'
 
 export function usePolling(fetchFn, intervalMs = 3000) {

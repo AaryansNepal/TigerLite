@@ -1,3 +1,10 @@
+/**
+ * LatencyChart — p99 latency bar chart colored by health status.
+ *
+ * Green (<500ms), yellow (500-1000ms), red (>1000ms). Reference line at 200ms
+ * shows the SLO target. Shares the same customer health data as the table.
+ */
+
 import { usePolling } from '@/hooks/usePolling'
 import { getCustomerHealth } from '@/lib/api'
 import Panel from '@/components/Panel'

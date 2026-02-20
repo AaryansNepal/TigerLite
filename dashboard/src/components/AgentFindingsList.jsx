@@ -1,3 +1,10 @@
+/**
+ * AgentFindingsList — displays AI-generated findings from the agent's investigations.
+ *
+ * Each finding has a severity badge (critical/warning/info), summary, and
+ * expandable evidence queries showing the actual SQL the agent ran.
+ */
+
 import { usePolling } from '@/hooks/usePolling'
 import { getFindings } from '@/lib/api'
 import Panel from '@/components/Panel'

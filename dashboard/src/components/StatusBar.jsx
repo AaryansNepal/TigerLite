@@ -1,3 +1,11 @@
+/**
+ * StatusBar — top bar with event count, agent status, deploy state, and action buttons.
+ *
+ * Polls scenario status every 2s. "Trigger Bad Deploy" rolls out v1.2.4 (the buggy version).
+ * "Run Agent" kicks off an AI investigation and passes the session ID up to App for
+ * the snapshot timeline to auto-select.
+ */
+
 import { usePolling } from '@/hooks/usePolling'
 import { getScenarioStatus, triggerBadDeploy, triggerAgent } from '@/lib/api'
 import { Button } from '@/components/ui/button'

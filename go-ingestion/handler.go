@@ -1,3 +1,8 @@
+// HTTP handler — validates incoming telemetry, fans out to batcher + detector.
+//
+// Each POST /ingest does two things: queues the event for batch forwarding to
+// the Python backend (Iceberg storage) and feeds it to the anomaly detector.
+// The struct mirrors backend/src/schema.py exactly for zero-translation forwarding.
 package main
 
 import (

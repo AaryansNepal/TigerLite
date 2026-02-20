@@ -1,3 +1,11 @@
+"""Telemetry simulator — generates realistic multi-customer traffic.
+
+Sends events to the Go ingestion service (or Python backend directly).
+After BAD_DEPLOY_DELAY seconds, rolls out v1.2.4 which introduces a
+connection pool leak on the /api/v1/orders endpoint. The bug is quadratic:
+heavy users like Wonka Industries degrade much faster than light users.
+"""
+
 import asyncio
 import logging
 import os
@@ -12,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")
 GO_INGESTION_URL = os.getenv("GO_INGESTION_URL", "")
-INGEST_URL = GO_INGESTION_URL if GO_INGESTION_URL else BACKEND_URL
+INGEST_URL = GO_INGESTION_URL if GO_INGESTION_URL else BACKEND_URL  # prefer Go service if configured
 BAD_DEPLOY_DELAY = int(os.getenv("BAD_DEPLOY_DELAY", "60"))
 
 

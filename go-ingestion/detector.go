@@ -1,3 +1,9 @@
+// Sliding-window anomaly detector — watches per-customer error rates and latency.
+//
+// Maintains a 60s rolling window of samples per customer_id. Every 5s, checks if
+// any customer exceeds 10% error rate or 1000ms avg latency. On threshold breach,
+// POSTs to the Python backend's /api/agent/run to trigger an AI investigation.
+// Cooldown period (5m) prevents re-triggering for the same customer.
 package main
 
 import (

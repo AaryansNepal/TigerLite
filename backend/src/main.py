@@ -1,8 +1,14 @@
+"""FastAPI application — routes, lifecycle, and SSE streaming.
+
+Central coordinator: connects the Iceberg catalog on startup, wires the event
+buffer for periodic flush, and exposes REST endpoints for ingestion, querying,
+agent control, and real-time SSE streaming to the dashboard.
+"""
+
 import asyncio
 import logging
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import FastAPI, BackgroundTasks
@@ -13,7 +19,7 @@ from sse_starlette.sse import EventSourceResponse
 from .config import GEMINI_API_KEY
 from .events import event_bus
 from .iceberg_writer import connect_catalog, ensure_events_table
-from .ingestion import EventBuffer, event_buffer, periodic_flush
+from .ingestion import event_buffer, periodic_flush
 from .query import query_customer_health, query_recent_telemetry
 from .schema import TelemetryEvent
 from .agent.runtime import AgentRuntime

@@ -42,9 +42,10 @@ def _pick_endpoint(orders_pct: int) -> str:
 
 
 def _customer_pressure(cid: str) -> float:
+    """Quadratic pressure: occasional users barely notice, heavy users cascade."""
     hits = _customer_hits.get(cid, 0)
-    linear = min(1.0, hits / 150)
-    return linear * linear  
+    linear = min(1.0, hits / 150)  # normalize to 0-1 over 150 requests
+    return linear * linear          # square it — this is why Wonka degrades fastest
 
 
 def _make_event(cid: str, endpoint: str, deploy: str, degraded: bool) -> dict:
@@ -52,8 +53,8 @@ def _make_event(cid: str, endpoint: str, deploy: str, degraded: bool) -> dict:
         _customer_hits[cid] = _customer_hits.get(cid, 0) + 1
         pressure = _customer_pressure(cid)
 
-        error_rate = 0.02 + pressure * 0.55
-        latency_multiplier = 1 + pressure * 50
+        error_rate = 0.02 + pressure * 0.55       # 2% baseline → up to 57% under full pressure
+        latency_multiplier = 1 + pressure * 50    # 1x baseline → up to 51x under full pressure
 
         if random.random() < error_rate:
             status = random.choice([500, 502, 503])

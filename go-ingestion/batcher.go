@@ -1,3 +1,9 @@
+// Event batcher — buffers telemetry and flushes to the Python backend.
+//
+// Uses the classic Go channel + select + ticker pattern. Events arrive via Submit()
+// (non-blocking), accumulate in a batch, and flush either when the batch is full
+// (50 events) or on a 2s timer — whichever comes first. Atomic counters exposed
+// via Stats() for the /metrics endpoint.
 package main
 
 import (

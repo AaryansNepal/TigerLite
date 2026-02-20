@@ -1,3 +1,10 @@
+/**
+ * Skeleton loading presets — one per panel type.
+ *
+ * Each skeleton matches the real layout shape of its panel so there's no
+ * layout shift when data arrives. Shown only during isFirstLoad.
+ */
+
 import { Skeleton } from "@/components/ui/skeleton"
 
 export function TableSkeleton({ rows = 5, cols = 6 }) {

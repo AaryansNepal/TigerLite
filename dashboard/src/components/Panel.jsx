@@ -1,3 +1,10 @@
+/**
+ * Panel — shared card wrapper used by every dashboard panel.
+ *
+ * Provides consistent header (title + optional action slot) and content area.
+ * Eliminates duplicated Card/CardHeader/CardContent markup across 6 components.
+ */
+
 import { Card, CardHeader, CardContent } from "@/components/ui/card"
 
 export default function Panel({ title, actions, children, className }) {

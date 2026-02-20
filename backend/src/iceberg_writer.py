@@ -1,3 +1,10 @@
+"""Iceberg table management — schema definition, catalog connection, and writes.
+
+Defines the events table schema with partition spec (day + customer_id),
+connects to the REST catalog with retry logic, and appends batches via PyArrow.
+Partitioning by customer_id enables fast per-customer queries in DuckDB.
+"""
+
 import logging
 import time
 

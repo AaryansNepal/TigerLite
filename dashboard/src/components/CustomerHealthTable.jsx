@@ -1,3 +1,12 @@
+/**
+ * CustomerHealthTable — sortable per-customer metrics with drill-down drawer.
+ *
+ * The centerpiece UX: click any row to open a Sheet showing that customer's
+ * metrics (p50, p99, error rate, request count) alongside agent findings filtered
+ * to that customer. Connects raw observability data to AI analysis in one view.
+ * Column headers are clickable for ascending/descending sort.
+ */
+
 import { useState, useMemo } from 'react'
 import { usePolling } from '@/hooks/usePolling'
 import { getCustomerHealth, getFindings } from '@/lib/api'

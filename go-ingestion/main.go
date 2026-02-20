@@ -1,3 +1,8 @@
+// Go ingestion service — high-throughput HTTP frontend for telemetry events.
+//
+// Sits in front of the Python backend to handle burst traffic. Events flow through
+// two goroutines: batcher (buffers → forwards to Python) and detector (sliding-window
+// anomaly detection → auto-triggers the agent). Uses Go 1.22 method-pattern routing.
 package main
 
 import (
@@ -17,6 +22,7 @@ func main() {
 		backendURL = "http://localhost:8000"
 	}
 
+	// Both run as background goroutines for the lifetime of the process
 	batcher := NewBatcher(backendURL)
 	go batcher.Run()
 
@@ -25,6 +31,7 @@ func main() {
 
 	handler := NewHandler(batcher, detector)
 
+	// Go 1.22 method-pattern routing — no external router needed
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /ingest", handler.Ingest)
 	mux.HandleFunc("GET /health", handler.Health)

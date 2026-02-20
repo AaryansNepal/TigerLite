@@ -1,3 +1,11 @@
+/**
+ * Server-Sent Events hook with requestAnimationFrame batching.
+ *
+ * Events buffer in a ref (no re-render per event) and flush to state via rAF
+ * (~16ms batches). Prevents jank during high-throughput telemetry. Supports
+ * pause/resume and manual clear.
+ */
+
 import { useState, useEffect, useRef, useCallback } from 'react'
 
 export function useSSE(url, maxEvents = 200) {

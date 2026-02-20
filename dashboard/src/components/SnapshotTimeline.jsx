@@ -1,3 +1,11 @@
+/**
+ * SnapshotTimeline — visualizes the agent's reasoning chain as a Git-like timeline.
+ *
+ * Each dot is an immutable snapshot version. Click to expand and see the stored
+ * objects (messages, tool calls, function responses). Session picker lets you
+ * switch between different investigation sessions.
+ */
+
 import { useState, useEffect } from 'react'
 import { usePolling } from '@/hooks/usePolling'
 import { getSessions, getSessionSnapshots, getSnapshot } from '@/lib/api'

@@ -1,3 +1,13 @@
+"""DuckDB query engine — reads Iceberg tables via iceberg_scan().
+
+Key pattern: PyIceberg resolves the current metadata.json path, then DuckDB
+reads Parquet files directly from S3 using that path. No Spark, no JVM —
+just in-process columnar scans.
+
+The run_sql() function is the agent's gateway: it rewrites 'FROM events'
+to iceberg_scan(), enforces read-only access, and caps row counts.
+"""
+
 import logging
 import re
 from typing import Optional
