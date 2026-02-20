@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import StatusBar from './components/StatusBar'
-import CustomerHealthTable from './components/CustomerHealthTable'
-import LatencyChart from './components/LatencyChart'
-import AgentFindingsList from './components/AgentFindingsList'
-import SnapshotTimeline from './components/SnapshotTimeline'
-import LiveEventFeed from './components/LiveEventFeed'
+import StatusBar from '@/components/StatusBar'
+import CustomerHealthTable from '@/components/CustomerHealthTable'
+import LatencyChart from '@/components/LatencyChart'
+import AgentFindingsList from '@/components/AgentFindingsList'
+import SnapshotTimeline from '@/components/SnapshotTimeline'
+import LiveEventFeed from '@/components/LiveEventFeed'
 
 export default function App() {
   const [forceSessionId, setForceSessionId] = useState(null)

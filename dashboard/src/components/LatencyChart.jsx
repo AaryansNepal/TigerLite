@@ -1,5 +1,7 @@
-import { usePolling } from '../hooks/usePolling'
-import { getCustomerHealth } from '../lib/api'
+import { usePolling } from '@/hooks/usePolling'
+import { getCustomerHealth } from '@/lib/api'
+import Panel from '@/components/Panel'
+import { ChartSkeleton } from '@/components/skeletons'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
   ResponsiveContainer, Cell, ReferenceLine,
@@ -18,7 +20,7 @@ function getColor(p99) {
 }
 
 export default function LatencyChart() {
-  const { data } = usePolling(getCustomerHealth, 3000)
+  const { data, isFirstLoad } = usePolling(getCustomerHealth, 3000)
   const customers = data?.customers ?? []
 
   const chartData = customers.map(c => ({
@@ -29,45 +31,41 @@ export default function LatencyChart() {
   }))
 
   return (
-    <div className="bg-gray-900 rounded-lg border border-gray-800 overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-800">
-        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">
-          Latency by Customer (p99)
-        </h2>
-      </div>
-
+    <Panel title="Latency by Customer (p99)">
       <div className="p-4 h-64">
-        {chartData.length === 0 ? (
-          <div className="h-full flex items-center justify-center text-gray-500 text-sm">
+        {isFirstLoad ? (
+          <ChartSkeleton />
+        ) : chartData.length === 0 ? (
+          <div className="h-full flex items-center justify-center text-muted-foreground text-sm">
             Waiting for data...
           </div>
         ) : (
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} margin={{ top: 5, right: 10, left: 10, bottom: 5 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="#374151" />
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(0 0% 14.9%)" />
               <XAxis
                 dataKey="name"
-                tick={{ fill: '#9ca3af', fontSize: 11 }}
-                axisLine={{ stroke: '#4b5563' }}
+                tick={{ fill: 'hsl(0 0% 63.9%)', fontSize: 11 }}
+                axisLine={{ stroke: 'hsl(0 0% 14.9%)' }}
               />
               <YAxis
-                tick={{ fill: '#9ca3af', fontSize: 11 }}
-                axisLine={{ stroke: '#4b5563' }}
-                label={{ value: 'ms', position: 'insideTopLeft', fill: '#6b7280', fontSize: 11 }}
+                tick={{ fill: 'hsl(0 0% 63.9%)', fontSize: 11 }}
+                axisLine={{ stroke: 'hsl(0 0% 14.9%)' }}
+                label={{ value: 'ms', position: 'insideTopLeft', fill: 'hsl(0 0% 63.9%)', fontSize: 11 }}
               />
               <Tooltip
                 contentStyle={{
-                  backgroundColor: '#1f2937',
-                  border: '1px solid #374151',
+                  backgroundColor: 'hsl(0 0% 7%)',
+                  border: '1px solid hsl(0 0% 14.9%)',
                   borderRadius: '8px',
-                  color: '#e5e7eb',
+                  color: 'hsl(0 0% 98%)',
                   fontSize: 12,
                 }}
                 formatter={(value, name) => [`${value?.toFixed(1)} ms`, name.toUpperCase()]}
                 labelFormatter={(label, payload) => payload?.[0]?.payload?.fullName ?? label}
               />
-              <ReferenceLine y={200} stroke="#4b5563" strokeDasharray="3 3" label={{ value: 'SLO', fill: '#6b7280', fontSize: 10 }} />
-              <Bar dataKey="p99" radius={[4, 4, 0, 0]}>
+              <ReferenceLine y={200} stroke="hsl(0 0% 14.9%)" strokeDasharray="3 3" label={{ value: 'SLO', fill: 'hsl(0 0% 63.9%)', fontSize: 10 }} />
+              <Bar dataKey="p99" radius={[4, 4, 0, 0]} className="cursor-pointer">
                 {chartData.map((entry, i) => (
                   <Cell key={i} fill={getColor(entry.p99)} />
                 ))}
@@ -76,6 +74,6 @@ export default function LatencyChart() {
           </ResponsiveContainer>
         )}
       </div>
-    </div>
+    </Panel>
   )
 }
