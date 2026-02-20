@@ -47,6 +47,15 @@ async def run_simulator():
         while True:
             elapsed = time.time() - start
 
+            if not bad_deploy:
+                try:
+                    r = await client.get(f"{BACKEND_URL}/api/scenario/status", timeout=2.0)
+                    if r.status_code == 200 and r.json().get("bad_deploy_triggered"):
+                        bad_deploy = True
+                        logger.info("══ BAD DEPLOY v1.2.4 ROLLED OUT (dashboard trigger) ══")
+                except Exception:
+                    pass
+
             if elapsed > BAD_DEPLOY_DELAY and not bad_deploy:
                 bad_deploy = True
                 logger.info("══ BAD DEPLOY v1.2.4 ROLLED OUT ══")

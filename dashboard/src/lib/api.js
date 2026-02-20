@@ -35,7 +35,11 @@ export async function getScenarioStatus() {
 }
 
 export async function triggerAgent() {
-  const res = await fetch(`${API_BASE}/api/agent/run`, { method: 'POST' })
+  const res = await fetch(`${API_BASE}/api/agent/run`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
   return res.json()
 }
 

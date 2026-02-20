@@ -42,22 +42,6 @@ def _pick_endpoint(orders_pct: int) -> str:
 
 
 def _customer_pressure(cid: str) -> float:
-    """
-    SQUARED pressure curve — this is the key design choice.
-
-    Connection pool leaks are non-linear in reality: a few leaked connections
-    are invisible, but once you cross ~70% pool capacity, everything cascades.
-    The squared term models this:
-
-    After 90 seconds of bad deploy:
-      Wonka:   ~145 hits → (145/150)² = 0.93 → error 53%, p99 ~2500ms  → CRITICAL
-      Weyland:  ~63 hits → (63/150)²  = 0.18 → error 12%, p99 ~500ms   → mild warning
-      Stark:    ~40 hits → (40/150)²  = 0.07 → error  6%, p99 ~200ms   → barely visible
-      Globex:   ~18 hits → (18/150)²  = 0.01 → error  3%, p99 ~75ms    → normal
-      Initech:   ~5 hits → (5/150)²   = 0.00 → error  2%, p99 ~55ms    → normal
-
-    Result: Wonka is clearly the outlier. Everyone else is mostly fine.
-    """
     hits = _customer_hits.get(cid, 0)
     linear = min(1.0, hits / 150)
     return linear * linear  # squared — the magic
