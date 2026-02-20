@@ -44,7 +44,7 @@ def _pick_endpoint(orders_pct: int) -> str:
 def _customer_pressure(cid: str) -> float:
     hits = _customer_hits.get(cid, 0)
     linear = min(1.0, hits / 150)
-    return linear * linear  # squared — the magic
+    return linear * linear  
 
 
 def _make_event(cid: str, endpoint: str, deploy: str, degraded: bool) -> dict:

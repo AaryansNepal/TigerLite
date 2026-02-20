@@ -61,7 +61,7 @@ export default function AgentFindingsList() {
                       </summary>
                       <div className="mt-2 space-y-1">
                         {f.evidence_queries.map((q, i) => (
-                          <pre key={i} className="bg-black/30 rounded p-2 font-mono text-muted-foreground overflow-x-auto">
+                          <pre key={i} className="bg-black/30 rounded p-2 font-mono text-muted-foreground whitespace-pre-wrap break-all">
                             {q}
                           </pre>
                         ))}

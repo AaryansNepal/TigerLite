@@ -4,12 +4,6 @@ dist/
 __pycache__/
 *.pyc
 .vite/
-web_claude_plan.md
-EXTRAS.md
-
-# Go build artifacts
 go-ingestion/ingestion
 *.exe
-
-# Python virtual environments
 .venv/

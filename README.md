@@ -1,6 +1,6 @@
 # TigerLite — Agentic Observability
 
-A miniature version of FireTiger's architecture: ingest telemetry through a Go microservice into Apache Iceberg on MinIO, query with DuckDB, run a Git-inspired snapshot-based agent that detects per-customer anomalies using Gemini, and expose the data lake via MCP tools for Claude Desktop.
+A miniature version of FireTiger's architecture: ingest telemetry through a Go microservice into Apache Iceberg on MinIO, query with DuckDB, run a Git-inspired snapshot-based agent that detects per-customer anomalies, and expose the data lake via MCP tools for Claude Desktop.
 
 ## Architecture
 
@@ -26,7 +26,7 @@ A miniature version of FireTiger's architecture: ingest telemetry through a Go m
 
 ## What This Demonstrates
 
-- **Apache Iceberg** — real table format with REST catalog, not just Parquet files
+- **Apache Iceberg** — table format with REST catalog, not just Parquet files
 - **DuckDB + `iceberg_scan()`** — fast OLAP queries resolved via PyIceberg metadata paths
 - **Git-inspired agent snapshots** — immutable, content-addressable reasoning chains stored in MinIO
 - **Go microservice** — channel-based batching, stdlib-only HTTP, multi-stage Docker build
@@ -37,14 +37,14 @@ A miniature version of FireTiger's architecture: ingest telemetry through a Go m
 
 ### Prerequisites
 - Docker & Docker Compose
-- Gemini API key (for the agent — [get one free](https://aistudio.google.com/apikey))
+- Gemini API key (for the agent)
 
 ### Run
 
 ```bash
 # 1. Clone and configure
 cp .env.example .env
-# Edit .env and set your GEMINI_API_KEY
+# Edit .env and set your OPENAI_API_KEY
 
 # 2. Start everything
 ./scripts/demo.sh
@@ -98,6 +98,7 @@ FireTiger/
 ├── go-ingestion/
 │   ├── main.go                # Entry point: env config, wire batcher, start server
 │   ├── handler.go             # HTTP handlers: /ingest, /health, /metrics
+│   ├── detector.go            # Sliding-window anomaly detector, auto-triggers agent
 │   ├── batcher.go             # Channel-based batching goroutine
 │   ├── Dockerfile             # Multi-stage build (~15MB image)
 │   └── go.mod
@@ -145,8 +146,6 @@ FireTiger/
 ## Go Ingestion Service
 
 The Go service sits between the simulator and the Python backend, accepting events on `:8080` and forwarding them in batches.
-
-**Why a separate service?** It demonstrates Go proficiency (the job listing mentions Go) while adding a real architectural pattern — a high-throughput ingestion layer that buffers and batches before hitting the processing backend.
 
 **Key implementation details:**
 - **Channel + select + ticker** for batching (flush on 50 events or every 2s)
@@ -203,7 +202,7 @@ The MCP server exposes TigerLite's Iceberg data lake to Claude Desktop (or any M
 
 ## What I'd Add Next
 
-- **Agent branching/forking** — parallel investigation paths, merge results (Git branch model)
-- **Slack integration** — post findings to a channel when anomalies are detected
-- **Prometheus metrics** — expose Go and Python metrics for Grafana dashboards
-- **Query cache** — DuckDB result caching with TTL for repeated dashboard queries
+**Claude Code integration** — agent finds the bug, generates a PR to fix it, closes the detect→fix loop
+**Long-horizon agents** — continuous monitoring with persistent memory across sessions, not single investigation cycles
+**Agent branching** — parallel investigation paths that fork from a snapshot, explore different hypotheses, merge results
+**Customer knowledge graph** — agents learn per-customer baselines over days/weeks, detect subtle drift that thresholds miss
