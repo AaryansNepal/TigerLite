@@ -45,7 +45,7 @@ def _customer_pressure(cid: str) -> float:
     """Quadratic pressure: occasional users barely notice, heavy users cascade."""
     hits = _customer_hits.get(cid, 0)
     linear = min(1.0, hits / 150)  # normalize to 0-1 over 150 requests
-    return linear * linear          # square it — this is why Wonka degrades fastest
+    return linear * linear          # square it - degrade much faster
 
 
 def _make_event(cid: str, endpoint: str, deploy: str, degraded: bool) -> dict:

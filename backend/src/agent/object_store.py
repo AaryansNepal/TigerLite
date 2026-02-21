@@ -1,8 +1,4 @@
-"""Content-addressable JSON object store on MinIO.
-
-Mirrors FireTiger's immutable object storage pattern:
-every object is stored at s3://snapshots/objects/{sha256}.json
-"""
+"""Content-addressable JSON object store on MinIO. every object is stored at s3://snapshots/objects/{sha256}.json"""
 
 import hashlib
 import json

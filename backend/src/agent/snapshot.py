@@ -1,4 +1,4 @@
-"""Snapshot-based session engine — mirrors FireTiger's Git-inspired design.
+"""Snapshot-based session engine — Git-inspired design.
 
 Each snapshot is immutable and contains:
 - session_id: identifies the agent session
