@@ -1,211 +1,111 @@
-# TigerLite — Agentic Observability
+# TigerLite v2
 
-A miniature version of FireTiger's architecture: ingest telemetry through a Go microservice into Apache Iceberg on MinIO, query with DuckDB, run a Git-inspired snapshot-based agent that detects per-customer anomalies, and expose the data lake via MCP tools for Claude Desktop.
+> AI-powered operations platform. Connect your OpenTelemetry data, GitHub repo,
+> and Slack workspace, then create autonomous agents in plain language. Agents
+> watch your production telemetry 24/7, investigate anomalies, correlate against
+> recent commits, and post structured root-cause findings to Slack — without
+> dashboards, thresholds, or runbooks.
+>
+> Inspired by [Firetiger](https://www.firetiger.com).
 
-## Architecture
+This branch (`demo`) is the v2 rewrite. The legacy v1 prototype lives on
+[`aaryans`](https://github.com/AaryansNepal/TigerLite/tree/aaryans).
+
+## Repository layout
 
 ```
-┌─────────────┐     ┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
-│  Simulator   │────▶│ Go Ingestion │────▶│   Backend    │────▶│  MinIO (S3)      │
-│  (10 custs)  │     │ (batch+fwd)  │     │  (FastAPI)   │     │  ├── warehouse/  │
-└─────────────┘     └──────────────┘     │              │     │  │   (Iceberg)   │
-                                         │  Ingestion   │     │  └── snapshots/  │
-┌─────────────┐                          │  Query (Duck)│     │      (Agent)     │
-│  Dashboard   │◀──────────────────────▶│  Agent       │     └──────────────────┘
-│  (React)     │ SSE                     │  SSE         │
-└─────────────┘                          └──────┬───────┘     ┌──────────────────┐
-                                                │             │  REST Catalog     │
-┌─────────────┐                                 └────────────▶│  (Iceberg meta)  │
-│  MCP Server  │────── DuckDB + iceberg_scan() ──────────────▶│                  │
-│  (Claude)    │                                              └──────────────────┘
-└─────────────┘
+tigerlite/
+├── CLAUDE.md                  # Orientation for Claude Code (read this first)
+├── docs/                      # Phase plan, architecture, agent design, schema, UI spec
+├── apps/
+│   └── dashboard/             # Next.js 15 + Tailwind + shadcn/ui
+├── services/
+│   ├── ingest/                # Go OTLP/HTTP receiver
+│   ├── control-plane/         # Python/FastAPI — CRUD, queue, watchers
+│   ├── agent-runtime/         # Python — snapshot loop worker
+│   └── mcp-internal/          # TigerLite's own MCP server (DuckDB + artifacts)
+├── packages/
+│   └── shared-types/          # TypeScript types shared between dashboard and APIs
+├── infra/
+│   ├── docker-compose.yml     # Local dev: MinIO + Iceberg REST catalog
+│   ├── migrations/            # Postgres schema (apply to Supabase)
+│   └── iceberg-rest/          # Catalog config
+└── scripts/                   # Shell helpers (migrate, seed, etc.)
 ```
 
-**7 Docker services:** MinIO → minio-setup → REST Catalog → Backend (FastAPI) → Go Ingestion → Simulator + Dashboard
-**MCP Server** runs locally via Claude Desktop (stdio transport, `profiles: [mcp]`)
+## Quick start (local dev)
 
-## What This Demonstrates
-
-- **Apache Iceberg** — table format with REST catalog, not just Parquet files
-- **DuckDB + `iceberg_scan()`** — fast OLAP queries resolved via PyIceberg metadata paths
-- **Git-inspired agent snapshots** — immutable, content-addressable reasoning chains stored in MinIO
-- **Go microservice** — channel-based batching, stdlib-only HTTP, multi-stage Docker build
-- **MCP tool server** — Claude Desktop can query the data lake directly (3 tools at different abstraction levels)
-- **SSE streaming** — real-time dashboard updates via Server-Sent Events
-
-## Quick Start
-
-### Prerequisites
-- Docker & Docker Compose
-- Gemini API key (for the agent)
-
-### Run
+Prereqs: Docker, Node 20+, pnpm 9+, Python 3.11+, Go 1.22+, [`uv`](https://github.com/astral-sh/uv).
 
 ```bash
-# 1. Clone and configure
-cp .env.example .env
-# Edit .env and set your OPENAI_API_KEY
+# 1. Copy env template and fill in real values
+cp .env.example .env.local
+# Edit .env.local — at minimum set SUPABASE_SERVICE_ROLE_KEY, DATABASE_URL,
+# and (when reaching Phase 1) GEMINI_API_KEY.
 
-# 2. Start everything
-./scripts/demo.sh
+# 2. Bring up local infra (MinIO + Iceberg REST catalog)
+pnpm infra:up
 
-# Or manually:
-docker compose up --build
+# 3. Apply Postgres schema to Supabase
+pnpm db:migrate
+
+# 4. Install dashboard deps and start dev server
+pnpm install
+pnpm dev
+
+# 5. (Phase 1+) start the control plane and agent runtime
+cd services/control-plane && uv sync && uv run uvicorn tigerlite_control.main:app --reload --port 8000
+cd services/agent-runtime && uv sync && uv run python -m tigerlite_runtime.worker
+
+# 6. (Phase 0+) start the OTLP receiver
+cd services/ingest && go run ./cmd/ingest
 ```
 
-### Endpoints
+## Phases
 
-| URL | Service | Description |
-|-----|---------|-------------|
-| http://localhost:5173 | Dashboard | React UI with live charts |
-| http://localhost:8000 | Backend API | FastAPI — ingestion, query, agent |
-| http://localhost:8080 | Go Ingestion | High-throughput event intake |
-| http://localhost:9001 | MinIO Console | Object storage UI (admin/password) |
+| Phase | Goal | Demo lands |
+|-------|------|------------|
+| 0     | Multi-tenant SaaS foundation + OTLP intake | User can sign up, get an OTLP endpoint, see "Connected" |
+| 1     | First agent end-to-end (NL → investigate → finding) | A finding appears in the dashboard within 60s of failure injection |
+| 2     | GitHub + Slack MCP integration | Slack message arrives with a specific commit SHA |
+| 3     | Verification loop + multi-agent + per-agent memory | Agent auto-resolves the issue after a fix is deployed |
+| 4     | Claude Code handoff | "Copy as Claude Code prompt" yields a runnable fix prompt |
 
-## Design Decisions
+See [`docs/PLAN.md`](docs/PLAN.md) for the full checklist and status log.
 
-- **REST Catalog** (`tabulario/iceberg-rest`) — I chose a shared Iceberg metadata catalog so every service sees the same table state. This mirrors how production Iceberg deployments work with Nessie or AWS Glue.
+## Production architecture (one note)
 
-- **DuckDB + `iceberg_scan()`** — instead of running a Spark cluster, DuckDB reads Iceberg metadata directly. This keeps the demo lightweight while still using real Iceberg table format with snapshots and schema evolution.
+The agent runtime is a long-running Python worker for demo simplicity. The
+`run_one_step(snapshot_id) → next_snapshot_id` function is a pure step, with
+no in-memory state between calls, so `services/agent-runtime/lambda_handler.py`
+documents how to swap the worker for AWS Lambda + S3 event notifications —
+which matches Firetiger's published architecture exactly. Same function,
+different driver.
 
-- **Snapshot-based agent** — every agent reasoning step is stored as an immutable, content-addressable object in MinIO (SHA-256 keyed). This is inspired by Git's object model and makes every investigation fully auditable.
+## Hosting
 
-- **Go ingestion service** — I built a separate ingestion layer in Go to demonstrate familiarity with the language. It uses stdlib-only HTTP, channel-based batching with select+ticker, and atomic counters — no frameworks needed. The ~15MB multi-stage Docker image shows I understand production container practices.
+For the demo:
 
-- **MCP tool server** — FireTiger uses MCP as their extensibility mechanism, so I built a tool server that lets Claude Desktop query the data lake directly. Three tools at different abstraction levels: raw SQL, pre-built health metrics, and deploy timeline.
+| Component                    | Host                     |
+|------------------------------|--------------------------|
+| Dashboard (Next.js)          | Vercel (free)            |
+| OTLP receiver, control plane, agent runtime | Fly.io (free shared-cpu-1x) |
+| Postgres + Auth + Realtime   | Supabase (free)          |
+| Iceberg + snapshots storage  | AWS S3 free tier (5 GB)  |
+| Monitored app                | Fork of [`opentelemetry-demo`](https://github.com/open-telemetry/opentelemetry-demo) running on laptop or DigitalOcean droplet |
 
-## Project Structure
+## Documentation
 
-```
-FireTiger/
-├── backend/
-│   ├── src/
-│   │   ├── main.py            # FastAPI app, routes, lifecycle
-│   │   ├── config.py          # Environment configuration
-│   │   ├── schema.py          # Pydantic models
-│   │   ├── iceberg_writer.py  # PyIceberg catalog + write
-│   │   ├── ingestion.py       # Event buffer + flush
-│   │   ├── query.py           # DuckDB queries via iceberg_scan
-│   │   ├── events.py          # SSE event bus
-│   │   └── agent/
-│   │       ├── object_store.py  # Content-addressable store
-│   │       ├── snapshot.py      # Immutable snapshot engine
-│   │       ├── tools.py         # Agent tool definitions
-│   │       ├── prompts.py       # System prompt
-│   │       └── runtime.py       # Agent execution loop
-│   ├── Dockerfile
-│   └── pyproject.toml
-├── go-ingestion/
-│   ├── main.go                # Entry point: env config, wire batcher, start server
-│   ├── handler.go             # HTTP handlers: /ingest, /health, /metrics
-│   ├── detector.go            # Sliding-window anomaly detector, auto-triggers agent
-│   ├── batcher.go             # Channel-based batching goroutine
-│   ├── Dockerfile             # Multi-stage build (~15MB image)
-│   └── go.mod
-├── mcp-server/
-│   ├── server.py              # MCP server entry point (stdio transport)
-│   ├── tools.py               # 3 tools: query_events, customer_health, deploy_history
-│   ├── claude_desktop_config.json  # Example Claude Desktop config
-│   ├── Dockerfile
-│   └── pyproject.toml
-├── simulator/
-│   ├── src/
-│   │   ├── scenarios.py       # Traffic generation
-│   │   └── main.py            # Simulator loop (routes via Go service)
-│   ├── Dockerfile
-│   └── pyproject.toml
-├── dashboard/
-│   ├── src/
-│   │   ├── App.jsx
-│   │   ├── lib/api.js
-│   │   ├── hooks/{usePolling,useSSE}.js
-│   │   └── components/
-│   │       ├── StatusBar.jsx
-│   │       ├── CustomerHealthTable.jsx
-│   │       ├── LatencyChart.jsx
-│   │       ├── AgentFindingsList.jsx
-│   │       ├── SnapshotTimeline.jsx
-│   │       └── LiveEventFeed.jsx
-│   ├── Dockerfile
-│   └── nginx.conf
-├── scripts/demo.sh
-├── docker-compose.yml
-└── README.md
-```
+- [`CLAUDE.md`](CLAUDE.md) — orientation for Claude Code sessions
+- [`docs/PLAN.md`](docs/PLAN.md) — phased build plan and status log
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — three planes, data flow, hosting
+- [`docs/AGENT_DESIGN.md`](docs/AGENT_DESIGN.md) — snapshot loop, worker, tools
+- [`docs/DATA_MODEL.md`](docs/DATA_MODEL.md) — Postgres schema, Iceberg tables, S3 layout
+- [`docs/UI_SPEC.md`](docs/UI_SPEC.md) — dashboard screens
+- [`docs/DEMO.md`](docs/DEMO.md) — what success looks like
+- [`docs/MONITORED_APP.md`](docs/MONITORED_APP.md) — Astronomy Shop fork setup
+- [`docs/TECH_STACK.md`](docs/TECH_STACK.md) — stack choices with reasoning
 
-## Work Flow
+## License
 
-1. `docker compose up` — all services start, Go ingestion accepts traffic on :8080
-2. Dashboard shows live telemetry, all 10 customers green
-3. After 60s (or click "Trigger Bad Deploy"), Wonka Industries degrades
-4. Customer health table: Wonka row turns red with p99 > 2000ms
-5. Agent detects per-customer anomaly, investigates with DuckDB queries
-6. Finding appears: "Latency regression for Wonka Industries after deploy v1.2.4"
-7. Click snapshot timeline to see every step of agent reasoning — immutable and auditable
-
-## Go Ingestion Service
-
-The Go service sits between the simulator and the Python backend, accepting events on `:8080` and forwarding them in batches.
-
-**Key implementation details:**
-- **Channel + select + ticker** for batching (flush on 50 events or every 2s)
-- **`sync/atomic` counters** for lock-free metrics
-- **`*string` for `ErrorMessage`** to handle JSON null (matches Python's `Optional[str]`)
-- **Non-blocking submit** with backpressure logging when the channel is full
-- **Multi-stage Docker build** — final image is ~15MB on Alpine
-
-```bash
-# Test the Go service directly
-curl localhost:8080/health
-curl localhost:8080/metrics
-curl -X POST localhost:8080/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"timestamp":"2025-01-01T00:00:00Z","trace_id":"abc-123","customer_id":"c1","customer_name":"Acme","endpoint":"/api/data","method":"GET","status_code":200,"latency_ms":42.5,"deploy_version":"v1.0","region":"us-east-1"}'
-```
-
-## MCP Tool Server
-
-The MCP server exposes TigerLite's Iceberg data lake to Claude Desktop (or any MCP-compatible client) via three tools at different abstraction levels:
-
-| Tool | Description | Abstraction |
-|------|-------------|-------------|
-| `query_events` | Run arbitrary SQL against the events table | Raw — full flexibility |
-| `get_customer_health` | P50/P99 latency, error rates, per customer | Pre-built — common query |
-| `get_deploy_history` | Deploy version timeline with impact metrics | Domain-specific |
-
-**Connect Claude Desktop:**
-
-1. Start TigerLite: `docker compose up --build -d`
-2. Copy `mcp-server/claude_desktop_config.json` into your Claude Desktop MCP settings
-3. Ask Claude: "Which customer has the highest P99 latency right now?"
-
-## API Reference
-
-### Go Ingestion (`:8080`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/ingest` | Accept a telemetry event |
-| GET | `/health` | Liveness check |
-| GET | `/metrics` | Throughput counters |
-
-### Backend (`:8000`)
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Liveness check |
-| POST | `/ingest` | Direct event ingestion |
-| GET | `/api/customer-health` | Per-customer metrics |
-| GET | `/api/telemetry/recent` | Recent events |
-| GET | `/api/findings` | Agent findings |
-| POST | `/api/scenario/trigger-bad-deploy` | Trigger bad deploy |
-| POST | `/api/agent/run` | Trigger agent investigation |
-| GET | `/api/agent/stream` | SSE event stream |
-
-## What I'd Add Next
-
-**Claude Code integration** — agent finds the bug, generates a PR to fix it, closes the detect→fix loop
-
-**Long-horizon agents** — continuous monitoring with persistent memory across sessions, not single investigation cycles
-
-**Agent branching** — parallel investigation paths that fork from a snapshot, explore different hypotheses, merge results
-
-**Customer knowledge graph** — agents learn per-customer baselines over days/weeks, detect subtle drift that thresholds miss
+TBD.

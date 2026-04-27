@@ -1,0 +1,107 @@
+# TigerLite v2 — local development infrastructure.
+#
+# This compose file is for LOCAL DEV ONLY. Production uses managed services:
+#   - Postgres → Supabase
+#   - Object storage → AWS S3
+#   - Iceberg catalog → AWS Glue (or stays on tabulario for demo)
+#
+# Spin up with: pnpm infra:up   (or: docker compose -f infra/docker-compose.yml up -d)
+# Tear down with: pnpm infra:down
+#
+# Services:
+#   - minio          → S3-compatible object store (telemetry + snapshots buckets)
+#   - minio-init     → one-shot job that creates the buckets
+#   - iceberg-rest   → Apache Iceberg REST catalog backed by MinIO
+#
+# Postgres is intentionally NOT in this file. We use Supabase for both dev and
+# prod. If you want a fully-offline dev setup, uncomment the postgres service
+# at the bottom and point DATABASE_URL at it.
+
+services:
+  minio:
+    image: minio/minio:RELEASE.2025-01-20T14-49-07Z
+    container_name: tigerlite-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    ports:
+      - "9000:9000"   # S3 API
+      - "9001:9001"   # MinIO web console (http://localhost:9001)
+    volumes:
+      - ./.minio:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # One-shot init job: create buckets and set them readable.
+  minio-init:
+    image: minio/mc:RELEASE.2024-11-21T17-21-54Z
+    container_name: tigerlite-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      TELEMETRY_BUCKET: ${TELEMETRY_BUCKET:-tigerlite-dev-telemetry}
+      SNAPSHOTS_BUCKET: ${SNAPSHOTS_BUCKET:-tigerlite-dev-snapshots}
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    entrypoint: >
+      /bin/sh -c "
+        set -e;
+        until /usr/bin/mc alias set local http://minio:9000 \"$$MINIO_ACCESS_KEY\" \"$$MINIO_SECRET_KEY\"; do
+          echo 'waiting for minio...';
+          sleep 2;
+        done;
+        /usr/bin/mc mb --ignore-existing local/$$TELEMETRY_BUCKET;
+        /usr/bin/mc mb --ignore-existing local/$$SNAPSHOTS_BUCKET;
+        echo 'buckets ready: $$TELEMETRY_BUCKET, $$SNAPSHOTS_BUCKET';
+      "
+
+  iceberg-rest:
+    image: tabulario/iceberg-rest:1.6.0
+    container_name: tigerlite-iceberg-rest
+    restart: unless-stopped
+    depends_on:
+      minio-init:
+        condition: service_completed_successfully
+    environment:
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      AWS_REGION: us-east-1
+      CATALOG_WAREHOUSE: s3://${TELEMETRY_BUCKET:-tigerlite-dev-telemetry}/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+    ports:
+      - "8181:8181"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8181/v1/config || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  # Optional fully-offline Postgres. Uncomment and set DATABASE_URL to
+  # postgresql://postgres:postgres@localhost:5432/tigerlite if you don't
+  # want to hit Supabase from local dev.
+  #
+  # postgres:
+  #   image: postgres:16-alpine
+  #   container_name: tigerlite-postgres
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: postgres
+  #     POSTGRES_PASSWORD: postgres
+  #     POSTGRES_DB: tigerlite
+  #   ports:
+  #     - "5432:5432"
+  #   volumes:
+  #     - ./.postgres:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U postgres"]
+  #     interval: 5s
+  #     timeout: 5s
+  #     retries: 5

@@ -1,0 +1,33 @@
+{
+  "resourceSpans": [
+    {
+      "resource": {
+        "attributes": [
+          { "key": "service.name", "value": { "stringValue": "checkout" } },
+          { "key": "service.version", "value": { "stringValue": "1.2.3" } }
+        ]
+      },
+      "scopeSpans": [
+        {
+          "scope": { "name": "test-scope", "version": "0.1.0" },
+          "spans": [
+            {
+              "traceId": "0102030405060708090a0b0c0d0e0f10",
+              "spanId": "0102030405060708",
+              "name": "POST /api/checkout",
+              "kind": "SPAN_KIND_SERVER",
+              "startTimeUnixNano": "1745764800000000000",
+              "endTimeUnixNano": "1745764800500000000",
+              "status": { "code": "STATUS_CODE_OK" },
+              "attributes": [
+                { "key": "http.request.method", "value": { "stringValue": "POST" } },
+                { "key": "http.route", "value": { "stringValue": "/api/checkout" } },
+                { "key": "http.response.status_code", "value": { "intValue": "200" } }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

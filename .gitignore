@@ -1,9 +1,69 @@
+# OS
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Env / secrets
 .env
+.env.local
+.env.*.local
+*.pem
+*.key
+
+# Node
 node_modules/
+.next/
+.turbo/
+.pnpm-store/
 dist/
+build/
+out/
+*.tsbuildinfo
+
+# Python
 __pycache__/
-*.pyc
-.vite/
+*.py[cod]
+*$py.class
+*.egg-info/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Go
+services/ingest/bin/
+services/ingest/ingest
 go-ingestion/ingestion
 *.exe
-.venv/
+
+# Vite (legacy v1)
+.vite/
+
+# Logs
+*.log
+npm-debug.log*
+pnpm-debug.log*
+
+# Local infra data
+infra/data/
+infra/.minio/
+infra/.postgres/
+infra/.iceberg/
+
+# Class submission scratch
+CSC440_Implementation_Team_15/
+CSC440_Implementation_Team_15.zip
+
+# Local planning notes (not part of the v2 repo source — copied into docs/)
+files/
+
+# Coverage
+coverage/
+.coverage
+htmlcov/
