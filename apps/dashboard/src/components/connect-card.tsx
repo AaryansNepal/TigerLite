@@ -10,6 +10,7 @@ export function ConnectCard({
   description,
   actionHref,
   actionLabel,
+  secondary,
 }: {
   icon: LucideIcon;
   name: string;
@@ -17,7 +18,9 @@ export function ConnectCard({
   description: string;
   actionHref: string;
   actionLabel: string;
+  secondary?: { href?: string; label: string; onClick?: string };
 }) {
+  const isExternal = /^https?:\/\//i.test(actionHref);
   return (
     <div className="rounded-lg border bg-card p-4 space-y-3">
       <div className="flex items-center gap-3">
@@ -30,12 +33,31 @@ export function ConnectCard({
         </div>
       </div>
       <p className="text-sm text-muted-foreground line-clamp-2">{description}</p>
-      <Link
-        href={actionHref as any}
-        className="inline-flex items-center text-sm rounded-md border px-3 py-1.5 hover:bg-accent"
-      >
-        {actionLabel}
-      </Link>
+      <div className="flex items-center gap-2 flex-wrap">
+        {isExternal ? (
+          <a
+            href={actionHref}
+            className="inline-flex items-center text-sm rounded-md border px-3 py-1.5 hover:bg-accent"
+          >
+            {actionLabel}
+          </a>
+        ) : (
+          <Link
+            href={actionHref as any}
+            className="inline-flex items-center text-sm rounded-md border px-3 py-1.5 hover:bg-accent"
+          >
+            {actionLabel}
+          </Link>
+        )}
+        {secondary?.href && (
+          <Link
+            href={secondary.href as any}
+            className="inline-flex items-center text-xs text-muted-foreground hover:text-foreground hover:underline"
+          >
+            {secondary.label}
+          </Link>
+        )}
+      </div>
     </div>
   );
 }
