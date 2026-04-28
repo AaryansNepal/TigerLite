@@ -31,6 +31,9 @@ Tenant: {tenant_name}
 ## Memory from prior sessions
 {memory_text}
 
+## GitHub repository
+{github_context}
+
 ## Tools
 - query_telemetry(sql): runs DuckDB SQL against this tenant's traces, logs,
   and metrics tables. The tables are already tenant-scoped CTEs.
@@ -182,6 +185,50 @@ def render_investigation_system_prompt(
         plan=agent.get("plan", ""),
         scope_text=scope_text,
         memory_text=memory_text,
+        github_context=_render_github_context(agent),
+    )
+
+
+def _render_github_context(agent: dict[str, Any]) -> str:
+    """Tell the agent EXACTLY which GitHub repo it can read, so it doesn't
+    hallucinate repo names like `aaryansnepal/payment` (which doesn't exist
+    — the payment service code lives under src/payment/ inside the main
+    repo).
+    """
+    repo = agent.get("github_repo")
+    if not repo:
+        return (
+            "(no GitHub repo connected for this agent — github_* tools will "
+            "fail with no-credentials errors. Don't call them.)"
+        )
+
+    if "/" not in repo:
+        return f"(invalid github_repo on agent: {repo!r})"
+
+    owner, name = repo.split("/", 1)
+    return (
+        f"The single repo for the monitored application is **{repo}**.\n"
+        f"All source code for ALL services lives inside this one repo.\n"
+        f"\n"
+        f"When using github_* MCP tools (list_commits, get_commit, "
+        f"get_file_contents, search_code, etc.), use:\n"
+        f"  owner: {owner}\n"
+        f"  repo:  {name}\n"
+        f"\n"
+        f"DO NOT invent per-service repo names like '{owner}/payment' or "
+        f"'{owner}/cart'. Those are SERVICE NAMES inside the single repo. "
+        f"To read the payment service's code, call:\n"
+        f"  get_file_contents(owner='{owner}', repo='{name}', path='src/payment/...')\n"
+        f"\n"
+        f"Service-to-directory mapping in the OpenTelemetry Demo:\n"
+        f"  payment service       → src/payment/\n"
+        f"  cart service          → src/cart/\n"
+        f"  checkout service      → src/checkout/\n"
+        f"  product-catalog       → src/product-catalog/\n"
+        f"  recommendation        → src/recommendation/\n"
+        f"  shipping              → src/shipping/\n"
+        f"  frontend              → src/frontend/\n"
+        f"  flagd-ui              → src/flagd-ui/\n"
     )
 
 

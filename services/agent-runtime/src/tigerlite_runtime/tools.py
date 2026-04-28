@@ -253,23 +253,73 @@ async def _call_slack_mcp(
 
 
 async def _get_github_install_token(agent_id: str, pool: asyncpg.Pool) -> str | None:
+    """Returns a non-expired GitHub install token for the agent's connection.
+    Refreshes via the control plane's `/api/connections/github/{id}/refresh-token`
+    when the stored token is within 5 min of expiry (or already expired).
+
+    GitHub install tokens have a 1-hour TTL. Without refresh, every agent
+    investigation after the first hour 401s on github_* tool calls.
+    """
+    from datetime import datetime, timedelta, timezone
+
     from . import crypto_runtime
 
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
-            SELECT c.credentials_encrypted
+            SELECT c.id, c.credentials_encrypted, c.config
               FROM agents a
               JOIN connections c ON c.id = a.github_connection_id
              WHERE a.id = $1
             """,
             UUID(agent_id),
         )
-    if row is None or not row["credentials_encrypted"]:
+    if row is None:
         return None
+
+    cfg = row["config"]
+    if isinstance(cfg, str):
+        import json as _json
+        cfg = _json.loads(cfg)
+    cfg = cfg or {}
+
+    expires_raw = cfg.get("expires_at")
+    needs_refresh = True
+    if expires_raw:
+        try:
+            expires_at = datetime.fromisoformat(expires_raw.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            # 5-minute buffer so we don't hand out tokens that expire mid-call
+            needs_refresh = expires_at - now < timedelta(minutes=5)
+        except Exception:
+            needs_refresh = True
+
+    if not needs_refresh and row["credentials_encrypted"]:
+        try:
+            return crypto_runtime.decrypt_str(row["credentials_encrypted"])
+        except Exception:
+            pass  # fall through to refresh
+
+    # Refresh via the control plane's internal endpoint.
+    settings = get_settings()
     try:
-        return crypto_runtime.decrypt_str(row["credentials_encrypted"])
-    except Exception:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(
+                f"{settings.control_plane_url}/api/connections/github/{row['id']}/refresh-token",
+                headers={"X-Tigerlite-Internal": "1"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["token"]
+    except Exception as e:
+        log.warning("github token refresh failed", err=str(e), conn_id=str(row["id"]))
+        # As a last resort, return the (possibly expired) cached token —
+        # github_mcp will surface a clear 401 error to the agent.
+        if row["credentials_encrypted"]:
+            try:
+                return crypto_runtime.decrypt_str(row["credentials_encrypted"])
+            except Exception:
+                return None
         return None
 
 

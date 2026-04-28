@@ -19,7 +19,7 @@ from typing import Any
 from uuid import UUID
 
 import bcrypt
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, Request, status
 
 from ..auth import CurrentUser
 from ..config import get_settings
@@ -304,6 +304,70 @@ async def github_exchange(
             encrypted,
         )
     return Connection.model_validate(dict(row))
+
+
+@router.post("/github/{connection_id}/refresh-token")
+async def github_refresh_token(connection_id: UUID, request: Request) -> dict[str, Any]:
+    """Internal — called by the agent runtime when it sees an expired
+    install token. Mints a fresh one via the App JWT, encrypts and
+    persists. Returns the plaintext token + new expires_at.
+
+    GitHub install tokens are 1-hour TTL; without this the agent's
+    github_* tool calls 401 after the first hour.
+
+    Trusted via X-Tigerlite-Internal header (same pattern as the
+    /internal/ routes).
+    """
+    if request.headers.get("X-Tigerlite-Internal") != "1":
+        raise HTTPException(status_code=401, detail="internal only")
+
+    from ..agents import github_oauth
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        row = await conn.fetchrow(
+            "SELECT id, config FROM connections WHERE id = $1 AND kind = 'github'",
+            connection_id,
+        )
+    if row is None:
+        raise HTTPException(status_code=404, detail="connection not found")
+
+    cfg = row["config"]
+    if isinstance(cfg, str):
+        import json as _json
+        cfg = _json.loads(cfg)
+
+    installation_id = cfg.get("installation_id")
+    if not installation_id:
+        raise HTTPException(status_code=400, detail="installation_id missing on connection")
+
+    try:
+        token_resp = await github_oauth.get_installation_token(int(installation_id))
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"GitHub token exchange failed: {e}") from e
+
+    install_token = token_resp["token"]
+    expires_at = token_resp.get("expires_at")
+    encrypted = encrypt(install_token)
+
+    new_cfg = dict(cfg)
+    new_cfg["expires_at"] = expires_at
+
+    async with pool.acquire() as conn:
+        await conn.execute(
+            """
+            UPDATE connections
+               SET credentials_encrypted = $2,
+                   config = $3::jsonb,
+                   status = 'connected',
+                   updated_at = now()
+             WHERE id = $1
+            """,
+            connection_id,
+            encrypted,
+            _json_dumps(new_cfg),
+        )
+    return {"token": install_token, "expires_at": expires_at}
 
 
 @router.post("/github/sync")
