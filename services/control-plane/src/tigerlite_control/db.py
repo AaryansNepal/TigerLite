@@ -8,6 +8,9 @@ endpoints (and the endpoints validate too).
 
 from __future__ import annotations
 
+import asyncio
+from typing import Awaitable, Callable, TypeVar
+
 import asyncpg
 import structlog
 
@@ -24,12 +27,19 @@ async def get_pool() -> asyncpg.Pool:
         settings = get_settings()
         _pool = await asyncpg.create_pool(
             dsn=settings.database_url,
-            min_size=1,
-            max_size=10,
-            command_timeout=30,
+            # Larger pool absorbs Supabase pooler hiccups: requests don't
+            # block waiting for a free connection.
+            min_size=2,
+            max_size=25,
+            # Each query has 15s ceiling. Bigger and the user feels it as
+            # "the page hung."
+            command_timeout=15,
+            # How long to wait when acquiring a connection from the pool
+            # before giving up. Default is 60s which is way too long; we'd
+            # rather fail fast and let the retry decorator handle transient.
             server_settings={"application_name": "tigerlite-control-plane"},
         )
-        log.info("postgres pool created")
+        log.info("postgres pool created", max_size=25)
     return _pool
 
 
@@ -39,3 +49,47 @@ async def close_pool() -> None:
         await _pool.close()
         _pool = None
         log.info("postgres pool closed")
+
+
+T = TypeVar("T")
+
+
+async def with_retry(
+    fn: Callable[[], Awaitable[T]],
+    *,
+    attempts: int = 3,
+    backoff_seconds: float = 0.5,
+) -> T:
+    """Retry a coroutine on transient Postgres failures (timeouts, connection
+    errors). Re-raises the last exception if all attempts fail.
+
+    Use to wrap pool.acquire-bound code paths so a single Supabase blip
+    doesn't surface as a 500 to the user.
+    """
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        try:
+            return await fn()
+        except (
+            asyncio.TimeoutError,
+            asyncpg.exceptions.PostgresConnectionError,
+            asyncpg.exceptions.ConnectionDoesNotExistError,
+            asyncpg.exceptions.InterfaceError,
+            ConnectionError,
+            OSError,
+        ) as e:
+            last_exc = e
+            if i < attempts - 1:
+                wait = backoff_seconds * (2**i)
+                log.warning(
+                    "transient postgres error, retrying",
+                    attempt=i + 1,
+                    of=attempts,
+                    wait_s=wait,
+                    err=str(e)[:100],
+                )
+                await asyncio.sleep(wait)
+                continue
+            raise
+    # Unreachable but keeps type checker happy.
+    raise last_exc  # type: ignore[misc]

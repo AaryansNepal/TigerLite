@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, status
 
 from .. import queue
 from ..auth import CurrentUser
-from ..db import get_pool
+from ..db import get_pool, with_retry
 from ..models import (
     Agent,
     AgentCreateRequest,
@@ -107,16 +107,19 @@ async def create_agent(req: AgentCreateRequest, ctx: CurrentUser) -> Any:
 
 @router.get("", response_model=list[Agent])
 async def list_agents(ctx: CurrentUser) -> list[Agent]:
-    pool = await get_pool()
-    async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            """
-            SELECT * FROM agents
-             WHERE tenant_id = $1 AND status != 'archived'
-             ORDER BY created_at DESC
-            """,
-            UUID(ctx.tenant_id),
-        )
+    async def _query() -> list[Any]:
+        pool = await get_pool()
+        async with pool.acquire() as conn:
+            return await conn.fetch(
+                """
+                SELECT * FROM agents
+                 WHERE tenant_id = $1 AND status != 'archived'
+                 ORDER BY created_at DESC
+                """,
+                UUID(ctx.tenant_id),
+            )
+
+    rows = await with_retry(_query)
     return [_row_to_agent(r) for r in rows]
 
 

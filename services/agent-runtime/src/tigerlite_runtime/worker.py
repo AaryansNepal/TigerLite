@@ -62,9 +62,11 @@ async def main() -> None:
                 continue
 
             if job is None:
-                # Idle backoff.
+                # Idle backoff. 250ms — tight enough that manual triggers
+                # feel instant, loose enough that the empty-queue poll
+                # doesn't hammer Postgres.
                 try:
-                    await asyncio.wait_for(stop.wait(), timeout=1.0)
+                    await asyncio.wait_for(stop.wait(), timeout=0.25)
                 except asyncio.TimeoutError:
                     pass
                 continue

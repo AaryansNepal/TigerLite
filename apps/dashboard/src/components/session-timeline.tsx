@@ -13,28 +13,54 @@ export function SessionTimeline({ agentId, sessionId }: { agentId: string; sessi
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  // Initial fetch
+  // Initial fetch with auto-retry on transient failures (5xx, network).
+  // Supabase's pooler hiccups occasionally — without retry the user sees
+  // "Failed to load session HTTP 500" and has to refresh. With retry +
+  // exponential backoff, single blips become invisible.
   useEffect(() => {
     let cancelled = false;
+
+    async function fetchOnce(): Promise<{ ok: true; data: any } | { ok: false; status: number; text: string }> {
+      const r = await fetch(`/api/sessions/${sessionId}/timeline`, { cache: "no-store" });
+      if (r.ok) return { ok: true, data: await r.json() };
+      return { ok: false, status: r.status, text: await r.text() };
+    }
+
     async function load() {
       setLoading(true);
       setErr(null);
-      try {
-        const r = await fetch(`/api/sessions/${sessionId}/timeline`);
+      const delays = [0, 400, 1200, 2500]; // 4 tries, ~4s total worst case
+      for (let i = 0; i < delays.length; i++) {
         if (cancelled) return;
-        if (!r.ok) {
-          setErr(`Failed to load session (HTTP ${r.status})`);
-          return;
+        if (delays[i] > 0) await new Promise((r) => setTimeout(r, delays[i]));
+        try {
+          const result = await fetchOnce();
+          if (cancelled) return;
+          if (result.ok) {
+            setObjects(result.data.objects ?? []);
+            setLatestSnapshot(result.data.snapshot_id);
+            setErr(null);
+            setLoading(false);
+            return;
+          }
+          // Only retry on 5xx + 408 (timeout). 4xx errors don't get better.
+          const transient = result.status >= 500 || result.status === 408;
+          if (!transient || i === delays.length - 1) {
+            setErr(`HTTP ${result.status}: ${result.text.slice(0, 200)}`);
+            setLoading(false);
+            return;
+          }
+        } catch (e) {
+          if (cancelled) return;
+          if (i === delays.length - 1) {
+            setErr(e instanceof Error ? e.message : String(e));
+            setLoading(false);
+            return;
+          }
         }
-        const data = (await r.json()) as { objects: Obj[]; snapshot_id: string };
-        setObjects(data.objects ?? []);
-        setLatestSnapshot(data.snapshot_id);
-      } catch (e) {
-        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
-      } finally {
-        if (!cancelled) setLoading(false);
       }
     }
+
     load();
     return () => {
       cancelled = true;
@@ -72,8 +98,14 @@ export function SessionTimeline({ agentId, sessionId }: { agentId: string; sessi
         <div className="text-sm text-muted-foreground">Loading session timeline…</div>
       )}
       {err && (
-        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
-          {err}
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive flex items-center gap-3">
+          <span className="flex-1">{err}</span>
+          <button
+            onClick={() => window.location.reload()}
+            className="text-xs rounded-md border border-destructive/40 px-2 py-1 hover:bg-destructive/10"
+          >
+            Retry
+          </button>
         </div>
       )}
       {!loading && !err && objects.length === 0 && (
