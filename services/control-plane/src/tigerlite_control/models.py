@@ -58,11 +58,20 @@ class AgentCreateRequest(BaseModel):
     """User submits the natural-language objective; we run the compiler and
     persist the result. The compiler may return clarifying questions, in
     which case the dashboard sends back another request with `answers`.
+
+    The compiler frequently emits option values as JSON numbers (e.g. 500 for
+    an ms threshold), so we accept a permissive value type and stringify
+    on the backend before passing to the LLM.
     """
     objective: str
-    answers: dict[str, str] | None = None
+    answers: dict[str, str | int | float | bool] | None = None
     slack_connection_id: UUID | None = None
     github_connection_id: UUID | None = None
+
+    def normalised_answers(self) -> dict[str, str]:
+        if not self.answers:
+            return {}
+        return {k: str(v) for k, v in self.answers.items()}
 
 
 class Agent(BaseModel):

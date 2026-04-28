@@ -61,7 +61,7 @@ async def create_agent(req: AgentCreateRequest, ctx: CurrentUser) -> Any:
 
     compiled = await compile_agent(
         objective=req.objective,
-        answers=req.answers or {},
+        answers=req.normalised_answers(),
         detected_services=list(services or []),
         slack_channels=[dict(r) for r in slack_channels],
         github_repos=[dict(r) for r in github_repos],

@@ -10,16 +10,30 @@ export function SessionTimeline({ agentId, sessionId }: { agentId: string; sessi
   const supabase = createClient();
   const [objects, setObjects] = useState<Obj[]>([]);
   const [latestSnapshot, setLatestSnapshot] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [err, setErr] = useState<string | null>(null);
 
   // Initial fetch
   useEffect(() => {
     let cancelled = false;
     async function load() {
-      const r = await fetch(`/api/sessions/${sessionId}/timeline`);
-      if (!r.ok || cancelled) return;
-      const data = (await r.json()) as { objects: Obj[]; snapshot_id: string };
-      setObjects(data.objects ?? []);
-      setLatestSnapshot(data.snapshot_id);
+      setLoading(true);
+      setErr(null);
+      try {
+        const r = await fetch(`/api/sessions/${sessionId}/timeline`);
+        if (cancelled) return;
+        if (!r.ok) {
+          setErr(`Failed to load session (HTTP ${r.status})`);
+          return;
+        }
+        const data = (await r.json()) as { objects: Obj[]; snapshot_id: string };
+        setObjects(data.objects ?? []);
+        setLatestSnapshot(data.snapshot_id);
+      } catch (e) {
+        if (!cancelled) setErr(e instanceof Error ? e.message : String(e));
+      } finally {
+        if (!cancelled) setLoading(false);
+      }
     }
     load();
     return () => {
@@ -54,8 +68,19 @@ export function SessionTimeline({ agentId, sessionId }: { agentId: string; sessi
 
   return (
     <div className="space-y-3">
-      {objects.length === 0 && (
-        <div className="text-sm text-muted-foreground">Investigation starting…</div>
+      {loading && objects.length === 0 && (
+        <div className="text-sm text-muted-foreground">Loading session timeline…</div>
+      )}
+      {err && (
+        <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+          {err}
+        </div>
+      )}
+      {!loading && !err && objects.length === 0 && (
+        <div className="text-sm text-muted-foreground">
+          This session has no objects yet. The agent may still be initialising —
+          updates appear here in real time.
+        </div>
       )}
       {objects.map((obj, i) => (
         <Card key={i} obj={obj} />

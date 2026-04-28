@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { DeleteAgentButton } from "@/components/delete-agent-button";
 import { TriggerNowButton } from "@/components/trigger-now-button";
 
 export default async function AgentDetailsPage({ params }: { params: Promise<{ id: string }> }) {
@@ -36,6 +37,11 @@ export default async function AgentDetailsPage({ params }: { params: Promise<{ i
       <section>
         <h2 className="text-sm font-medium text-muted-foreground mb-1">Scope</h2>
         <pre className="text-xs rounded-md bg-muted p-3 font-mono">{JSON.stringify(agent.scope_config, null, 2)}</pre>
+      </section>
+
+      <section className="pt-4 border-t">
+        <h2 className="text-sm font-medium text-destructive mb-2">Danger zone</h2>
+        <DeleteAgentButton agentId={agent.id} agentName={agent.name} />
       </section>
     </div>
   );

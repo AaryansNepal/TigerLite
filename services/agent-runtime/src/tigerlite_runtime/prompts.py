@@ -42,6 +42,81 @@ Tenant: {tenant_name}
 - prepare_fix_handoff(...): when you have high confidence, prepare a Claude
   Code-ready bundle for fixing.
 
+## Available tables (DuckDB, tenant-scoped)
+
+**traces** — one row per span. The most useful table for latency / errors.
+  start_time TIMESTAMP, end_time TIMESTAMP, duration_ms DOUBLE,
+  service_name VARCHAR, span_name VARCHAR, span_kind VARCHAR,
+  status_code VARCHAR — Pascal-case enum: 'Ok' / 'Error' / 'Unset'
+                       (NOT 'OK' / 'ERROR' / 'UNSET' — case matters!),
+  status_message VARCHAR,
+  http_method VARCHAR, http_route VARCHAR, http_status_code INTEGER,
+  http_url VARCHAR, rpc_method VARCHAR, rpc_service VARCHAR,
+  db_system VARCHAR, db_statement VARCHAR,
+  trace_id VARCHAR, span_id VARCHAR, parent_span_id VARCHAR,
+  attributes MAP<VARCHAR,VARCHAR>, resource_attributes MAP<VARCHAR,VARCHAR>
+
+**Important: identifying errors.** Many services don't set status_code at
+the span level (you'll see lots of 'Unset'). Use `http_status_code >= 500`
+as the more reliable HTTP error signal. For full coverage:
+    `(status_code = 'Error' OR http_status_code >= 500)`
+
+Errors often surface in the proxy/frontend services (frontend, frontend-proxy)
+even when the actual fault is downstream (payment, checkout). When investigating,
+query broadly across ALL services first, then drill down into the specific
+service whose status_message or attributes['exception.message'] reveals the
+underlying cause.
+
+**logs** — one row per log record.
+  time TIMESTAMP, severity_text VARCHAR, severity_number INTEGER,
+  service_name VARCHAR, body VARCHAR, body_type VARCHAR,
+  trace_id VARCHAR, span_id VARCHAR,
+  attributes MAP<VARCHAR,VARCHAR>, resource_attributes MAP<VARCHAR,VARCHAR>
+
+**metrics** — one row per data point. May be empty if the application
+  exports metrics elsewhere (Prometheus, etc.) — prefer `traces` for
+  latency/error work.
+  time TIMESTAMP, metric_name VARCHAR, metric_type VARCHAR
+  ('gauge','sum','histogram'), service_name VARCHAR,
+  gauge_value DOUBLE, sum_value DOUBLE,
+  histogram_count BIGINT, histogram_sum DOUBLE,
+  attributes MAP<VARCHAR,VARCHAR>, resource_attributes MAP<VARCHAR,VARCHAR>
+
+**Useful patterns** (all use Pascal-case 'Error' and HTTP fallback)
+
+- error counts by service:
+  `SELECT service_name, status_code,
+          SUM(CASE WHEN http_status_code >= 500 THEN 1 ELSE 0 END) AS http_errors,
+          COUNT(*) AS total
+     FROM traces
+    WHERE start_time >= now() - INTERVAL 5 MINUTE
+    GROUP BY 1, 2 ORDER BY total DESC`
+
+- recent errors with detail (the most useful single query):
+  `SELECT start_time, service_name, span_name, http_route, http_status_code,
+          status_message, attributes['exception.message'] AS err_msg,
+          attributes['exception.type'] AS err_type
+     FROM traces
+    WHERE (status_code = 'Error' OR http_status_code >= 500)
+      AND start_time >= now() - INTERVAL 5 MINUTE
+    ORDER BY start_time DESC LIMIT 50`
+
+- p95 latency by endpoint:
+  `SELECT http_route, QUANTILE_CONT(duration_ms, 0.95) AS p95, COUNT(*) AS n
+     FROM traces WHERE start_time >= now() - INTERVAL 5 MINUTE
+     GROUP BY 1 ORDER BY 2 DESC`
+
+- error rate by service:
+  `SELECT service_name,
+          SUM(CASE WHEN status_code='Error' OR http_status_code >= 500 THEN 1 ELSE 0 END)::DOUBLE
+            / GREATEST(COUNT(*), 1) * 100.0 AS err_pct,
+          COUNT(*) AS n
+     FROM traces WHERE start_time >= now() - INTERVAL 5 MINUTE
+     GROUP BY 1 HAVING n > 10 ORDER BY err_pct DESC`
+
+Time filtering: always use `start_time >= now() - INTERVAL N MINUTE`.
+Don't query without a time filter — the table can be huge.
+
 When MCP servers are connected (GitHub, Slack), additional tools appear in
 your tool list. Use list_recent_commits + get_commit_diff to correlate
 regressions with code changes.

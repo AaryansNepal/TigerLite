@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useState } from "react";
 
-type Question = { slot: string; question: string; options: string[] };
+type Question = { slot: string; question: string; options: (string | number)[] };
 
 export default function NewAgentPage() {
   const router = useRouter();
@@ -45,10 +45,14 @@ export default function NewAgentPage() {
     submit({});
   }
 
-  function onAnswerChosen(slot: string, value: string) {
-    const next = { ...answers, [slot]: value };
+  function onAnswerChosen(slot: string, value: string | number) {
+    // The compiler sometimes returns option values as JSON numbers (e.g. 500
+    // for an ms threshold). Coerce to string at the boundary so the API
+    // contract stays clean.
+    const stringValue = String(value);
+    const next = { ...answers, [slot]: stringValue };
     setAnswers(next);
-    setThread((t) => [...t, { role: "user", text: value }]);
+    setThread((t) => [...t, { role: "user", text: stringValue }]);
     setQuestions([]);
     submit(next);
   }
@@ -103,11 +107,11 @@ export default function NewAgentPage() {
           <div className="flex flex-wrap gap-2">
             {questions[0].options.map((opt) => (
               <button
-                key={opt}
+                key={String(opt)}
                 onClick={() => onAnswerChosen(questions[0].slot, opt)}
                 className="rounded-full border px-3 py-1 text-sm hover:bg-accent"
               >
-                {opt}
+                {String(opt)}
               </button>
             ))}
           </div>

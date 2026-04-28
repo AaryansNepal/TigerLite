@@ -11,8 +11,10 @@
 package handler
 
 import (
+	"compress/gzip"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -82,9 +84,9 @@ func (s *server) protect(h tenantHandler) http.HandlerFunc {
 }
 
 func (s *server) handleTraces(w http.ResponseWriter, r *http.Request, res *auth.Resolution) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+	body, err := readRequestBody(w, r)
 	if err != nil {
-		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
@@ -96,6 +98,12 @@ func (s *server) handleTraces(w http.ResponseWriter, r *http.Request, res *auth.
 		td, err = (&ptrace.ProtoUnmarshaler{}).UnmarshalTraces(body)
 	}
 	if err != nil {
+		slog.Warn("traces decode failed",
+			"err", err,
+			"content_type", r.Header.Get("Content-Type"),
+			"content_encoding", r.Header.Get("Content-Encoding"),
+			"bytes", len(body),
+		)
 		http.Error(w, "decode error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -107,9 +115,9 @@ func (s *server) handleTraces(w http.ResponseWriter, r *http.Request, res *auth.
 }
 
 func (s *server) handleLogs(w http.ResponseWriter, r *http.Request, res *auth.Resolution) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+	body, err := readRequestBody(w, r)
 	if err != nil {
-		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
@@ -121,6 +129,12 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request, res *auth.Re
 		ld, err = (&plog.ProtoUnmarshaler{}).UnmarshalLogs(body)
 	}
 	if err != nil {
+		slog.Warn("logs decode failed",
+			"err", err,
+			"content_type", r.Header.Get("Content-Type"),
+			"content_encoding", r.Header.Get("Content-Encoding"),
+			"bytes", len(body),
+		)
 		http.Error(w, "decode error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -132,9 +146,9 @@ func (s *server) handleLogs(w http.ResponseWriter, r *http.Request, res *auth.Re
 }
 
 func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request, res *auth.Resolution) {
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, 16<<20))
+	body, err := readRequestBody(w, r)
 	if err != nil {
-		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+		http.Error(w, "read body: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	defer r.Body.Close()
@@ -146,6 +160,12 @@ func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request, res *auth
 		md, err = (&pmetric.ProtoUnmarshaler{}).UnmarshalMetrics(body)
 	}
 	if err != nil {
+		slog.Warn("metrics decode failed",
+			"err", err,
+			"content_type", r.Header.Get("Content-Type"),
+			"content_encoding", r.Header.Get("Content-Encoding"),
+			"bytes", len(body),
+		)
 		http.Error(w, "decode error: "+err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -158,4 +178,35 @@ func (s *server) handleMetrics(w http.ResponseWriter, r *http.Request, res *auth
 
 func isJSON(r *http.Request) bool {
 	return strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "json")
+}
+
+// readRequestBody reads up to maxBytes from r.Body, decompressing transparently
+// if Content-Encoding is gzip (the OTel collector's default). Returns the raw
+// bytes ready to feed to ptrace/plog/pmetric Unmarshaler.
+func readRequestBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
+	const maxBytes = 16 << 20
+
+	var reader io.Reader = http.MaxBytesReader(w, r.Body, maxBytes)
+
+	enc := strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Encoding")))
+	switch enc {
+	case "", "identity":
+		// no decompression
+	case "gzip":
+		gz, err := gzip.NewReader(reader)
+		if err != nil {
+			return nil, fmt.Errorf("gzip header: %w", err)
+		}
+		defer gz.Close()
+		// Cap decompressed size too — gzip bombs are a thing.
+		reader = io.LimitReader(gz, maxBytes*8)
+	default:
+		return nil, fmt.Errorf("unsupported Content-Encoding %q", enc)
+	}
+
+	body, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, err
+	}
+	return body, nil
 }

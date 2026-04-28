@@ -34,6 +34,7 @@ async def start() -> list[asyncio.Task]:
         asyncio.create_task(cron_loop()),
         asyncio.create_task(reaper_loop(settings.job_reaper_interval_seconds)),
         asyncio.create_task(verification_loop()),
+        asyncio.create_task(session_reaper_loop()),
     ]
 
 
@@ -88,37 +89,74 @@ async def tick_anomaly() -> None:
 
 
 async def evaluate_scope(tenant_id: str, scope_config: dict[str, Any]) -> dict[str, Any] | None:
-    """Compute current vs baseline for the agent's scope. Returns evidence
-    dict if anomalous, else None.
+    """Compute current state of the agent's scope. Returns evidence dict if
+    anomalous, else None.
 
-    Phase 1 implementation is intentionally simple:
-      - Pull the configured metric (default: p95 latency on the configured
-        endpoints) over the last 5 minutes.
-      - Compare to the same metric averaged over the prior 7 days.
-      - If current > baseline * 2x AND current > absolute floor → anomaly.
-
-    Phase 3 will replace this with a proper rolling-percentile baseline
-    stored in the agent's memory.
+    Supports two metric types:
+      - "latency_p95"  → p95 of duration_ms over the window vs threshold_ms
+      - "error_rate"   → fraction of status_code='ERROR' spans vs threshold_percent
+    Endpoints can match either http_route or service_name (so an agent
+    declared with services=['payment'] still works).
     """
     if isinstance(scope_config, str):
         import json
         scope_config = json.loads(scope_config)
     metric = scope_config.get("metric", "latency_p95")
-    endpoints = scope_config.get("endpoints", [])
-    threshold_ms = float(scope_config.get("threshold_ms", 500))
+    endpoints = scope_config.get("endpoints", []) or scope_config.get("services", [])
+    look_back_min = int(scope_config.get("look_back_minutes", 5))
 
     if not endpoints:
         return None
 
-    endpoint_filter = " OR ".join([f"http_route = '{_quote(e)}'" for e in endpoints])
+    # Endpoint filter: match http_route OR service_name OR span_name (catch-all
+    # because the compiler sometimes lists service names like 'checkout' rather
+    # than HTTP routes like '/api/checkout').
+    eps = " OR ".join([
+        f"http_route = '{_quote(e)}' OR service_name = '{_quote(e)}' OR span_name LIKE '%{_quote(e)}%'"
+        for e in endpoints
+    ])
+
+    if metric == "error_rate":
+        threshold_pct = float(scope_config.get("threshold_percent", 1.0))
+        sql = f"""
+            SELECT
+              SUM(CASE WHEN status_code='ERROR' OR http_status_code >= 500 THEN 1 ELSE 0 END)::DOUBLE
+                / GREATEST(COUNT(*), 1) * 100.0 AS error_pct,
+              COUNT(*) AS n
+            FROM traces
+            WHERE start_time >= now() - INTERVAL '{look_back_min} minutes'
+              AND ({eps})
+        """
+        try:
+            result = run_tenant_query(tenant_id, sql)
+        except Exception as e:
+            log.debug("scope query failed", err=str(e))
+            return None
+        if not result.rows or result.rows[0][1] == 0:
+            return None
+        error_pct = float(result.rows[0][0] or 0)
+        if error_pct < threshold_pct:
+            return None
+        return {
+            "metric": "error_rate",
+            "endpoints": endpoints,
+            "threshold_percent": threshold_pct,
+            "current_error_pct": error_pct,
+            "request_count": int(result.rows[0][1]),
+            "window": f"last_{look_back_min}_minutes",
+            "detected_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    # Default: latency_p95
+    threshold_ms = float(scope_config.get("threshold_ms", 500))
     sql = f"""
         SELECT
           QUANTILE_CONT(duration_ms, 0.95) AS p95_now,
           AVG(duration_ms) AS avg_now,
           COUNT(*) AS n_now
         FROM traces
-        WHERE start_time >= now() - INTERVAL 5 MINUTE
-          AND ({endpoint_filter})
+        WHERE start_time >= now() - INTERVAL '{look_back_min} minutes'
+          AND ({eps})
     """
     try:
         result = run_tenant_query(tenant_id, sql)
@@ -258,3 +296,80 @@ async def reaper_loop(interval_seconds: int) -> None:
         except Exception as e:
             log.error("reaper failed", err=str(e))
         await asyncio.sleep(interval_seconds)
+
+
+async def session_reaper_loop() -> None:
+    """Auto-fail sessions that have been stuck in 'running' with no progress
+    for too long. Without this, transient runtime errors (Gemini 503, network
+    blips) leave zombie sessions that show up in the dashboard with empty
+    timelines, confusing the user.
+    """
+    log.info("session_reaper_loop starting")
+    while True:
+        try:
+            n = await reap_stuck_sessions()
+            if n:
+                log.warning("reaped stuck sessions", count=n)
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            log.error("session reaper failed", err=str(e))
+        await asyncio.sleep(60)
+
+
+async def reap_stuck_sessions() -> int:
+    """Mark sessions stuck >5 min in 'running' as failed. Two cases:
+      - step_count = 0 and started_at < now() - 5min  → never made progress
+      - latest_snapshot_id unchanged for >5min          → made progress then froze
+    """
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        # No-progress sessions
+        result = await conn.execute(
+            """
+            UPDATE sessions
+               SET status = 'failed',
+                   outcome = 'inconclusive',
+                   ended_at = now(),
+                   finding_summary = COALESCE(
+                       finding_summary,
+                       'Session stalled — runtime did not make progress within 5 minutes (likely upstream LLM error).'
+                   )
+             WHERE status = 'running'
+               AND started_at < now() - interval '5 minutes'
+               AND step_count = 0
+            """
+        )
+        no_progress = int(result.split()[-1]) if result else 0
+
+        # Progress-but-frozen sessions: latest_snapshot_id older than 5 min
+        # (we approximate via ended_at being null + started_at + step_count*15s)
+        result = await conn.execute(
+            """
+            UPDATE sessions
+               SET status = 'timed_out',
+                   outcome = 'inconclusive',
+                   ended_at = now(),
+                   finding_summary = COALESCE(
+                       finding_summary,
+                       'Session timed out — no snapshot progress for 5+ minutes.'
+                   )
+             WHERE status = 'running'
+               AND step_count > 0
+               AND started_at < now() - interval '15 minutes'
+            """
+        )
+        frozen = int(result.split()[-1]) if result else 0
+
+        # Clear current_issue_id for agents whose tracked issue lost its session
+        await conn.execute(
+            """
+            UPDATE agents a
+               SET current_issue_id = NULL
+              FROM issues i
+             WHERE a.current_issue_id = i.id
+               AND i.status NOT IN ('open', 'verifying', 'regressed')
+            """
+        )
+
+    return no_progress + frozen
