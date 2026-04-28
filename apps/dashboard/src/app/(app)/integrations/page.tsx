@@ -1,7 +1,5 @@
-import { MessagesSquare } from "lucide-react";
-
-import { ConnectCard } from "@/components/connect-card";
 import { GitHubCard } from "@/components/github-card";
+import { SlackCard } from "@/components/slack-card";
 import { TelemetryConnectCard } from "@/components/telemetry-connect-card";
 import { createClient } from "@/lib/supabase/server";
 
@@ -29,18 +27,7 @@ export default async function IntegrationsPage() {
       <div className="grid md:grid-cols-3 gap-4">
         <TelemetryConnectCard connection={otel ?? null} />
         <GitHubCard connection={github ?? null} appSlug={appSlug} />
-        <ConnectCard
-          icon={MessagesSquare}
-          name="Slack"
-          status={slack?.status ?? "pending"}
-          description={
-            slack?.config?.channel
-              ? `Posting to ${slack.config.channel}`
-              : "Pick a channel for findings + verification updates."
-          }
-          actionHref="/integrations/slack"
-          actionLabel={slack?.status === "connected" ? "Manage" : "Connect"}
-        />
+        <SlackCard connection={slack ?? null} />
       </div>
       <p className="text-xs text-muted-foreground">
         Setup guides:{" "}

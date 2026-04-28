@@ -144,19 +144,37 @@ INTERNAL_TOOL_DECLS: list[dict[str, Any]] = [
     {
         "name": "post_to_slack",
         "description": (
-            "Post a structured message to the agent's Slack channel. Use blocks for "
-            "rich formatting; the dashboard renders the same blocks in the session "
-            "timeline."
+            "Deliver the investigation finding to the user via Slack as a "
+            "structured Block Kit message. Use this AFTER record_finding when "
+            "you have a concrete root cause to share. Mirror the structure of "
+            "the finding: a one-line headline, a 1-2 sentence subtitle with "
+            "concrete numbers, a paragraph explaining the root cause (cite "
+            "specific commit SHAs / file paths if known), and key/value impact "
+            "lines with concrete counts. The dashboard renders an issue page "
+            "linked from the message."
         ),
         "parameters": {
             "type": "object",
             "properties": {
-                "title": {"type": "string"},
-                "summary": {"type": "string"},
-                "severity": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
-                "fields": {
+                "title": {
+                    "type": "string",
+                    "description": "Headline. e.g. 'Elevated response times detected on /checkout'",
+                },
+                "summary": {
+                    "type": "string",
+                    "description": "1-2 sentence subtitle with concrete numbers. e.g. 'p95 jumped from 280ms to 2.4s about 12 minutes ago. Error rate also climbing (0.4% → 3.2%).'",
+                },
+                "root_cause": {
+                    "type": "string",
+                    "description": "Paragraph explaining what is broken and why. Reference specific commit SHAs, file paths, or attribute values when available.",
+                },
+                "impact": {
                     "type": "object",
-                    "description": "Key/value pairs to render below the summary.",
+                    "description": "Concrete impact key/value pairs. e.g. {'Affected requests': '1,247', 'Customers impacted': '892'}",
+                },
+                "severity": {
+                    "type": "string",
+                    "enum": ["low", "medium", "high", "critical"],
                 },
             },
             "required": ["title", "summary"],
@@ -496,10 +514,10 @@ async def _update_memory(
 async def _post_to_slack(
     args: dict[str, Any], ctx: ToolContext, pool: asyncpg.Pool
 ) -> dict[str, Any]:
-    """Post via the configured Slack MCP, falling back to direct Web API call.
-
-    Phase 2 wires the Slack MCP. For Phase 1 we just stash the message on the
-    session as a finding-style record so the dashboard can render it.
+    """Post a Firetiger-style structured Block Kit message to the agent's
+    Slack channel. The message has 4 visual sections: a "New Issue —
+    {title}" header with subtitle, a Root cause paragraph, an Impact
+    key/value list, and a "View Issue" button linking to the dashboard.
     """
     settings = get_settings()
     async with pool.acquire() as conn:
@@ -517,26 +535,33 @@ async def _post_to_slack(
         return {"posted": False, "reason": "no slack channel configured"}
 
     if not agent["credentials_encrypted"]:
-        # No real token; record locally and return.
         log.info("slack-post-skipped (no credentials)", channel=agent["slack_channel"])
         return {"posted": False, "reason": "no credentials"}
 
-    # Decrypt and call Slack Web API directly. (MCP-based posting is wired in Phase 2.)
     from . import crypto_runtime
     token = crypto_runtime.decrypt_str(agent["credentials_encrypted"])
 
+    blocks = _build_slack_blocks(args, ctx, settings)
+
     payload = {
         "channel": agent["slack_channel"],
-        "text": f"*{args['title']}*\n{args['summary']}",
+        "text": f"New Issue — {args['title']}",  # fallback for notifications
+        "blocks": blocks,
+        "unfurl_links": False,
+        "unfurl_media": False,
     }
     async with httpx.AsyncClient(timeout=settings.agent_tool_timeout_seconds) as http:
         resp = await http.post(
             "https://slack.com/api/chat.postMessage",
-            headers={"Authorization": f"Bearer {token}"},
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Content-Type": "application/json; charset=utf-8",
+            },
             json=payload,
         )
         data = resp.json()
     if not data.get("ok"):
+        log.warning("slack post failed", error=data.get("error"), payload=payload)
         return {"posted": False, "error": data.get("error")}
     thread_ts = data.get("ts")
 
@@ -547,7 +572,86 @@ async def _post_to_slack(
             thread_ts,
             UUID(ctx.session_id),
         )
-    return {"posted": True, "thread_ts": thread_ts}
+    return {"posted": True, "thread_ts": thread_ts, "channel": agent["slack_channel"]}
+
+
+def _build_slack_blocks(
+    args: dict[str, Any], ctx: ToolContext, settings
+) -> list[dict[str, Any]]:
+    """Block Kit message matching the Firetiger demo style:
+
+      🔥 *New Issue — {title}*
+      {summary}
+
+      *Root cause*
+      {root_cause}
+
+      *Impact*
+      {key}: {value}
+      {key}: {value}
+
+      [ View Issue ]
+    """
+    title = args.get("title", "Issue detected")
+    summary = args.get("summary", "")
+    root_cause = (args.get("root_cause") or "").strip()
+    impact = args.get("impact") or {}
+    severity = args.get("severity", "medium")
+
+    severity_emoji = {
+        "low": "🟢",
+        "medium": "🟡",
+        "high": "🟠",
+        "critical": "🔴",
+    }.get(severity, "🟡")
+
+    blocks: list[dict[str, Any]] = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"{severity_emoji} *New Issue — {title}*\n{summary}",
+            },
+        }
+    ]
+
+    if root_cause:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Root cause*\n{root_cause}"},
+            }
+        )
+
+    if impact:
+        impact_lines = "\n".join(f"{k}: {v}" for k, v in impact.items())
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"*Impact*\n{impact_lines}"},
+            }
+        )
+
+    # "View Issue" button → dashboard session timeline (best-effort URL).
+    dashboard = (
+        getattr(settings, "dashboard_url", None) or "http://localhost:3000"
+    ).rstrip("/")
+    view_url = f"{dashboard}/agents/{ctx.agent_id}/sessions/{ctx.session_id}"
+    blocks.append(
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "View Issue"},
+                    "url": view_url,
+                    "style": "primary",
+                }
+            ],
+        }
+    )
+
+    return blocks
 
 
 async def _prepare_fix_handoff(args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
