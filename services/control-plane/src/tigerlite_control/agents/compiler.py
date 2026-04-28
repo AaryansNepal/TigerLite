@@ -49,9 +49,25 @@ Decide:
    - name: short title ("Checkout flow monitor")
    - description: one-sentence summary
    - plan: a multi-line runbook the user could read and trust
-   - scope_config: { metric, endpoints, threshold_ms, ... }
+   - scope_config: see canonical schema below
    - schedule_cron: "0 * * * *" if hourly is reasonable, else null
    - slack_channel + github_repo: pick from the connected ones if available
+
+scope_config MUST use these exact fields and values (the watcher does
+strict matching — any deviation means the agent never auto-triggers):
+
+  {
+    "metric": "error_rate" | "latency_p95",   // EXACT — underscore, lowercase
+    "endpoints": ["service-name", ...],          // a list of service_name OR http_route values
+    "threshold_percent": <number>,                // when metric=error_rate (e.g. 5.0 means 5%)
+    "threshold_ms":      <number>,                // when metric=latency_p95 (e.g. 500 means 500ms)
+    "look_back_minutes": <number>                 // window size, default 5
+  }
+
+Use sensible thresholds for the demo:
+  - error_rate: threshold_percent in [1, 5] for narrow scopes; 5–10 for broad scopes
+  - latency_p95: threshold_ms in [300, 1000] for HTTP endpoints
+  - look_back_minutes: 5 (default), 1 for fast-changing signals, 15 for noisy ones
 
 Output STRICT JSON ONLY. Either:
   {"clarifying_questions": [{"slot": "...", "question": "...", "options": [...]}]}
@@ -140,7 +156,53 @@ async def compile_agent(
     cfg.setdefault("objective", objective)
     cfg.setdefault("anomaly_enabled", True)
     cfg.setdefault("schedule_cron", "0 * * * *")
+    if "scope_config" in cfg:
+        cfg["scope_config"] = _normalise_scope_config(cfg["scope_config"])
     return CompilerResult(config=AgentConfig.model_validate(cfg), clarifying_questions=None)
+
+
+def _normalise_scope_config(scope: dict[str, Any]) -> dict[str, Any]:
+    """The compiler's LLM occasionally emits non-canonical fields (e.g.
+    'error rate' with a space, or 'lookback_seconds' instead of
+    'look_back_minutes'). Coerce to the schema the anomaly watcher
+    expects so auto-trigger actually fires.
+    """
+    out = dict(scope)
+
+    # Metric name normalisation
+    metric = str(out.get("metric", "")).strip().lower().replace(" ", "_").replace("-", "_")
+    if metric in ("error_rate", "errors", "error_rate_percent"):
+        out["metric"] = "error_rate"
+    elif metric in ("latency", "latency_p95", "p95", "p95_latency", "response_time"):
+        out["metric"] = "latency_p95"
+    elif metric:
+        out["metric"] = metric
+
+    # Endpoints / services unification — anomaly watcher matches on either
+    if "services" in out and "endpoints" not in out:
+        out["endpoints"] = out.pop("services")
+
+    # Look-back window unification
+    if "lookback_seconds" in out and "look_back_minutes" not in out:
+        try:
+            out["look_back_minutes"] = max(1, int(out.pop("lookback_seconds")) // 60)
+        except (TypeError, ValueError):
+            out.pop("lookback_seconds", None)
+
+    # Threshold renaming
+    if "error_rate_threshold_percent" in out and "threshold_percent" not in out:
+        out["threshold_percent"] = out.pop("error_rate_threshold_percent")
+    if "latency_threshold_ms" in out and "threshold_ms" not in out:
+        out["threshold_ms"] = out.pop("latency_threshold_ms")
+
+    # Sensible defaults
+    out.setdefault("look_back_minutes", 5)
+    if out.get("metric") == "error_rate":
+        out.setdefault("threshold_percent", 5.0)
+    elif out.get("metric") == "latency_p95":
+        out.setdefault("threshold_ms", 500)
+
+    return out
 
 
 def _parse_compiler_json(text: str) -> dict[str, Any]:

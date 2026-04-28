@@ -99,8 +99,12 @@ def run_tenant_query(tenant_id: str, sql: str, *, limit_rows: int = 10_000) -> Q
     cte_parts: list[str] = []
     for sig in ("traces", "logs", "metrics"):
         if sig in existing:
+            # MATERIALIZED forces DuckDB to evaluate the iceberg_scan once
+            # into an intermediate result. Without it, subqueries that
+            # reference the same CTE twice fail with "IcebergScan
+            # serialization not implemented".
             cte_parts.append(
-                f"{sig} AS (SELECT * FROM iceberg_scan('{base}/default/{sig}') "
+                f"{sig} AS MATERIALIZED (SELECT * FROM iceberg_scan('{base}/default/{sig}') "
                 f"WHERE tenant_id = '{_quote(tenant_id)}')"
             )
         else:
