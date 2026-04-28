@@ -227,6 +227,7 @@ async def _call_github_mcp(
 
     return await mcp_client.call_tool(
         command=settings.github_mcp_command,
+        args=["stdio", "--read-only"],
         tool_name=name,
         arguments=args,
         env={"GITHUB_PERSONAL_ACCESS_TOKEN": install_token},
@@ -538,6 +539,7 @@ async def discover_mcp_tools(agent_id: str, pool: asyncpg.Pool) -> list[dict[str
         try:
             gh_decls = await mcp_client.list_tool_decls(
                 command=settings.github_mcp_command,
+                args=["stdio", "--read-only"],
                 env={"GITHUB_PERSONAL_ACCESS_TOKEN": gh_token},
             )
             decls.extend(gh_decls)
