@@ -54,6 +54,7 @@ class Settings(BaseSettings):
     gemini_api_key: str = Field(default="")
     gemini_model_agent: str = Field(default="gemini-2.5-pro")
     gemini_model_compiler: str = Field(default="gemini-2.5-flash")
+    gemini_model_chat: str = Field(default="gemini-2.5-flash-lite")
 
     # GitHub
     github_app_id: str = Field(default="")

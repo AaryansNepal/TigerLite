@@ -62,9 +62,14 @@ class AgentCreateRequest(BaseModel):
     The compiler frequently emits option values as JSON numbers (e.g. 500 for
     an ms threshold), so we accept a permissive value type and stringify
     on the backend before passing to the LLM.
+
+    `transcript` is the running conversation thread (user typed prompts +
+    agent's clarifying questions and replies). The dashboard sends the full
+    thread on the *final* create call so we persist it on the agent row.
     """
     objective: str
     answers: dict[str, str | int | float | bool] | None = None
+    transcript: list[dict[str, Any]] | None = None
     slack_connection_id: UUID | None = None
     github_connection_id: UUID | None = None
 
@@ -89,6 +94,7 @@ class Agent(BaseModel):
     github_connection_id: UUID | None = None
     github_repo: str | None = None
     memory_ref: str | None = None
+    chat_transcript: list[dict[str, Any]] = Field(default_factory=list)
     status: AgentStatus
     current_issue_id: UUID | None = None
     created_at: datetime

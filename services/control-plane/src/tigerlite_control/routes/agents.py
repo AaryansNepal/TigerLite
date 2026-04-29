@@ -79,12 +79,14 @@ async def create_agent(req: AgentCreateRequest, ctx: CurrentUser) -> Any:
                 schedule_cron, anomaly_enabled,
                 slack_connection_id, slack_channel,
                 github_connection_id, github_repo,
+                chat_transcript,
                 status
             ) VALUES (
                 $1, $2, $3, $4, $5, $6::jsonb,
                 $7, $8,
                 $9, $10,
                 $11, $12,
+                $13::jsonb,
                 'active'
             )
             RETURNING *
@@ -101,6 +103,7 @@ async def create_agent(req: AgentCreateRequest, ctx: CurrentUser) -> Any:
             cfg.slack_channel,
             req.github_connection_id,
             cfg.github_repo,
+            json.dumps(req.transcript or []),
         )
     return _row_to_agent(row)
 
@@ -185,6 +188,33 @@ async def archive_agent(agent_id: UUID, ctx: CurrentUser) -> None:
             agent_id,
             UUID(ctx.tenant_id),
         )
+
+
+@router.post("/{agent_id}/transcript")
+async def save_transcript(
+    agent_id: UUID, body: dict[str, Any], ctx: CurrentUser
+) -> dict[str, str]:
+    """Persist the full agent-creation chat transcript on the agent row."""
+    transcript = body.get("transcript", [])
+    if not isinstance(transcript, list):
+        raise HTTPException(status_code=400, detail="transcript must be a list")
+
+    pool = await get_pool()
+    async with pool.acquire() as conn:
+        result = await conn.execute(
+            """
+            UPDATE agents
+               SET chat_transcript = $1::jsonb,
+                   updated_at = now()
+             WHERE id = $2 AND tenant_id = $3
+            """,
+            json.dumps(transcript),
+            agent_id,
+            UUID(ctx.tenant_id),
+        )
+    if result.endswith("0"):
+        raise HTTPException(status_code=404, detail="agent not found")
+    return {"ok": "true"}
 
 
 @router.post("/{agent_id}/trigger", status_code=status.HTTP_202_ACCEPTED)

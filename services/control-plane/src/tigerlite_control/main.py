@@ -23,6 +23,7 @@ from .config import get_settings
 from .db import close_pool, get_pool
 from .routes import (
     agents,
+    chat,
     connections,
     findings,
     iceberg_internal,
@@ -75,6 +76,7 @@ app.add_middleware(
 )
 
 app.include_router(agents.router, prefix="/api/agents", tags=["agents"])
+app.include_router(chat.router, prefix="/api/agents/chat", tags=["chat"])
 app.include_router(sessions.router, prefix="/api/sessions", tags=["sessions"])
 app.include_router(findings.router, prefix="/api/findings", tags=["findings"])
 app.include_router(issues.router, prefix="/api/issues", tags=["issues"])
