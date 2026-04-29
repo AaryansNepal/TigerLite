@@ -1,6 +1,6 @@
 # TigerLite — Agentic Observability
 
-A miniature version of FireTiger's architecture: ingest telemetry through a Go microservice into Apache Iceberg on MinIO, query with DuckDB, run a Git-inspired snapshot-based agent that detects per-customer anomalies, and expose the data lake via MCP tools for Claude Desktop.
+A miniature observability platform: ingest telemetry through a Go microservice into Apache Iceberg on MinIO, query with DuckDB, run a Git-inspired snapshot-based agent that detects per-customer anomalies, and expose the data lake via MCP tools for Claude Desktop.
 
 ## Architecture
 
@@ -44,7 +44,7 @@ A miniature version of FireTiger's architecture: ingest telemetry through a Go m
 ```bash
 # 1. Clone and configure
 cp .env.example .env
-# Edit .env and set your OPENAI_API_KEY
+# Edit .env and set your GEMINI_API_KEY
 
 # 2. Start everything
 ./scripts/demo.sh
