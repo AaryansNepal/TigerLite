@@ -15,9 +15,11 @@ files for tenant-scoped queries.
 
 from __future__ import annotations
 
+import time
 from datetime import date, datetime
-from typing import Any
+from typing import Any, Callable, TypeVar
 
+import requests.exceptions
 import structlog
 from pyiceberg.catalog import load_catalog
 from pyiceberg.exceptions import NoSuchTableError
@@ -180,57 +182,107 @@ SIGNAL_SCHEMAS = {
 _catalog = None
 
 
+def _build_catalog():
+    settings = get_settings()
+    if settings.object_store == "minio":
+        return load_catalog(
+            "tigerlite",
+            **{
+                "uri": settings.iceberg_catalog_uri,
+                "warehouse": settings.iceberg_warehouse,
+                "s3.endpoint": settings.minio_endpoint,
+                "s3.access-key-id": settings.minio_access_key,
+                "s3.secret-access-key": settings.minio_secret_key,
+                "s3.path-style-access": "true",
+                "s3.region": "us-east-1",
+            },
+        )
+    return load_catalog(
+        "tigerlite",
+        **{
+            "uri": settings.iceberg_catalog_uri,
+            "warehouse": settings.iceberg_warehouse,
+            "s3.region": settings.aws_region,
+            "s3.access-key-id": settings.aws_access_key_id,
+            "s3.secret-access-key": settings.aws_secret_access_key,
+        },
+    )
+
+
 def get_catalog():
     global _catalog
     if _catalog is None:
-        settings = get_settings()
-        if settings.object_store == "minio":
-            _catalog = load_catalog(
-                "tigerlite",
-                **{
-                    "uri": settings.iceberg_catalog_uri,
-                    "warehouse": settings.iceberg_warehouse,
-                    "s3.endpoint": settings.minio_endpoint,
-                    "s3.access-key-id": settings.minio_access_key,
-                    "s3.secret-access-key": settings.minio_secret_key,
-                    "s3.path-style-access": "true",
-                    "s3.region": "us-east-1",
-                },
-            )
-        else:
-            _catalog = load_catalog(
-                "tigerlite",
-                **{
-                    "uri": settings.iceberg_catalog_uri,
-                    "warehouse": settings.iceberg_warehouse,
-                    "s3.region": settings.aws_region,
-                    "s3.access-key-id": settings.aws_access_key_id,
-                    "s3.secret-access-key": settings.aws_secret_access_key,
-                },
-            )
+        _catalog = _build_catalog()
     return _catalog
+
+
+def _reset_catalog() -> None:
+    """Drop the cached catalog handle so the next call rebuilds."""
+    global _catalog
+    _catalog = None
+
+
+T = TypeVar("T")
+
+
+_TRANSIENT_EXCEPTIONS = (
+    requests.exceptions.ConnectionError,
+    requests.exceptions.Timeout,
+    ConnectionRefusedError,
+    OSError,
+)
+
+
+def _with_retry(fn: Callable[[], T], *, op: str, attempts: int = 3) -> T:
+    """Run fn() with catalog rebuild on transient connection errors.
+
+    Iceberg REST catalog can briefly drop connections (Docker container
+    restarts, MinIO blips). When we hit one, the cached `_catalog` object
+    is poisoned — same stuck-client pattern as boto3. Reset and retry.
+    """
+    last_exc: Exception | None = None
+    for i in range(attempts):
+        try:
+            return fn()
+        except _TRANSIENT_EXCEPTIONS as e:
+            last_exc = e
+            log.warning(
+                "iceberg transient error, rebuilding catalog",
+                op=op,
+                attempt=i + 1,
+                err=repr(e),
+            )
+            _reset_catalog()
+            if i < attempts - 1:
+                time.sleep(0.5 * (i + 1))
+    assert last_exc is not None
+    raise last_exc
 
 
 def get_or_create_table(signal: str):
     if signal not in SIGNAL_SCHEMAS:
         raise ValueError(f"unknown signal {signal!r}")
-    catalog = get_catalog()
-    identifier = ("default", signal)
-    try:
-        return catalog.load_table(identifier)
-    except NoSuchTableError:
-        log.info("creating iceberg table", signal=signal)
-        schema, spec = SIGNAL_SCHEMAS[signal]
+
+    def _load():
+        catalog = get_catalog()
+        identifier = ("default", signal)
         try:
-            catalog.create_namespace("default")
-        except Exception:
-            pass
-        return catalog.create_table(
-            identifier=identifier,
-            schema=schema,
-            partition_spec=spec,
-            properties={"write.target-file-size-bytes": "134217728"},
-        )
+            return catalog.load_table(identifier)
+        except NoSuchTableError:
+            log.info("creating iceberg table", signal=signal)
+            schema, spec = SIGNAL_SCHEMAS[signal]
+            try:
+                catalog.create_namespace("default")
+            except Exception:
+                pass
+            return catalog.create_table(
+                identifier=identifier,
+                schema=schema,
+                partition_spec=spec,
+                properties={"write.target-file-size-bytes": "134217728"},
+            )
+
+    return _with_retry(_load, op=f"load_table:{signal}")
 
 
 # ----------------------------------------------------------
@@ -241,16 +293,19 @@ def append_rows(signal: str, rows: list[dict[str, Any]]) -> int:
     """Append rows to the named Iceberg table. Returns rows written."""
     if not rows:
         return 0
-    table = get_or_create_table(signal)
 
     # Coerce timestamp / date strings into datetime / date objects.
     coerced = [_coerce_row(signal, r) for r in rows]
 
-    # Build a pyarrow table to feed table.append().
+    # Build a pyarrow table once; reuse across retries.
     import pyarrow as pa
 
-    arrow_table = pa.Table.from_pylist(coerced, schema=table.schema().as_arrow())
-    table.append(arrow_table)
+    def _append():
+        table = get_or_create_table(signal)
+        arrow_table = pa.Table.from_pylist(coerced, schema=table.schema().as_arrow())
+        table.append(arrow_table)
+
+    _with_retry(_append, op=f"append:{signal}")
     return len(coerced)
 
 

@@ -22,23 +22,43 @@ log = structlog.get_logger(__name__)
 _pool: asyncpg.Pool | None = None
 
 
+def _jsonb_encode(v: object) -> str:
+    """Smart encoder for the JSONB codec.
+
+    Some call-sites pass already-stringified JSON (`json.dumps(d)`) into
+    `$N::jsonb` parameters. With a naive `json.dumps` encoder, asyncpg
+    re-encodes that string and Postgres stores a JSON scalar of type
+    string — `{"a": 1}` becomes `"{\"a\": 1}"`. That corrupts the row and
+    later reads come back as a `str`, not a `dict`, breaking
+    `cfg.get("...")` call sites with `AttributeError`.
+
+    Pass-through strings (assumed to already be valid JSON), json.dumps
+    everything else.
+    """
+    if isinstance(v, (bytes, bytearray)):
+        return v.decode("utf-8")
+    if isinstance(v, str):
+        return v
+    return json.dumps(v)
+
+
 async def _init_connection(conn: asyncpg.Connection) -> None:
-    """Per-connection setup. Most importantly: register a JSONB codec so
-    asyncpg auto-decodes JSON/JSONB columns to Python dicts. Without this,
-    asyncpg returns those columns as strings and call sites have to
-    json.loads everywhere — the cause of an `AttributeError: 'str' object
-    has no attribute 'get'` in the agent compiler when iterating
+    """Per-connection setup. Register a JSONB codec so asyncpg auto-decodes
+    JSON/JSONB columns to Python dicts. Without this, asyncpg returns
+    those columns as strings and call sites have to json.loads
+    everywhere — the cause of an `AttributeError: 'str' object has no
+    attribute 'get'` in the agent compiler when iterating
     connections.config.
     """
     await conn.set_type_codec(
         "jsonb",
-        encoder=json.dumps,
+        encoder=_jsonb_encode,
         decoder=json.loads,
         schema="pg_catalog",
     )
     await conn.set_type_codec(
         "json",
-        encoder=json.dumps,
+        encoder=_jsonb_encode,
         decoder=json.loads,
         schema="pg_catalog",
     )

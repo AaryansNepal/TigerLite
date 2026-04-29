@@ -116,11 +116,17 @@ async def compile_agent(
         "answers": answers,
         "detected_services": detected_services,
         "slack_channels": [
-            {"display_name": c.get("display_name"), "channel": (c.get("config") or {}).get("channel")}
+            {
+                "display_name": c.get("display_name"),
+                "channel": (_as_dict(c.get("config")) or {}).get("channel"),
+            }
             for c in slack_channels
         ],
         "github_repos": [
-            {"display_name": r.get("display_name"), "repo": (r.get("config") or {}).get("repo_full_name")}
+            {
+                "display_name": r.get("display_name"),
+                "repo": (_as_dict(r.get("config")) or {}).get("repo_full_name"),
+            }
             for r in github_repos
         ],
     }
@@ -209,6 +215,23 @@ def _parse_compiler_json(text: str) -> dict[str, Any]:
     # Defensive: strip code fences if Gemini wraps in ```.
     cleaned = re.sub(r"^```(?:json)?\s*|\s*```$", "", text.strip(), flags=re.MULTILINE)
     return json.loads(cleaned)
+
+
+def _as_dict(v: Any) -> dict[str, Any] | None:
+    """Tolerate JSONB columns that — due to a historical double-encoding
+    bug — come back as a JSON-encoded string instead of a dict.
+    """
+    if v is None:
+        return None
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+        except (ValueError, TypeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
 
 
 def _skeleton_config(

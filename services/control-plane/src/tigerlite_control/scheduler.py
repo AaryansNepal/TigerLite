@@ -53,7 +53,7 @@ async def anomaly_loop(interval_seconds: int) -> None:
         except asyncio.CancelledError:
             break
         except Exception as e:
-            log.error("anomaly tick failed", err=str(e))
+            log.error("anomaly tick failed", err=repr(e))
         await asyncio.sleep(interval_seconds)
 
 
@@ -85,7 +85,7 @@ async def tick_anomaly() -> None:
                 payload={"agent_id": str(a["id"]), "evidence": evidence},
             )
         except Exception as e:
-            log.warning("agent scope eval failed", agent_id=str(a["id"]), err=str(e))
+            log.warning("agent scope eval failed", agent_id=str(a["id"]), err=repr(e))
 
 
 async def evaluate_scope(tenant_id: str, scope_config: dict[str, Any]) -> dict[str, Any] | None:
@@ -130,7 +130,7 @@ async def evaluate_scope(tenant_id: str, scope_config: dict[str, Any]) -> dict[s
         try:
             result = run_tenant_query(tenant_id, sql)
         except Exception as e:
-            log.debug("scope query failed", err=str(e))
+            log.debug("scope query failed", err=repr(e))
             return None
         if not result.rows or result.rows[0][1] == 0:
             return None
@@ -161,7 +161,7 @@ async def evaluate_scope(tenant_id: str, scope_config: dict[str, Any]) -> dict[s
     try:
         result = run_tenant_query(tenant_id, sql)
     except Exception as e:
-        log.debug("scope query failed (likely empty data)", err=str(e))
+        log.debug("scope query failed (likely empty data)", err=repr(e))
         return None
 
     if not result.rows or result.rows[0][2] == 0:
@@ -203,7 +203,7 @@ async def cron_loop() -> None:
         except asyncio.CancelledError:
             break
         except Exception as e:
-            log.error("cron tick failed", err=str(e))
+            log.error("cron tick failed", err=repr(e))
         await asyncio.sleep(60)
 
 
@@ -242,7 +242,7 @@ async def verification_loop() -> None:
         except asyncio.CancelledError:
             break
         except Exception as e:
-            log.error("verification tick failed", err=str(e))
+            log.error("verification tick failed", err=repr(e))
         await asyncio.sleep(60)
 
 
@@ -294,7 +294,7 @@ async def reaper_loop(interval_seconds: int) -> None:
         except asyncio.CancelledError:
             break
         except Exception as e:
-            log.error("reaper failed", err=str(e))
+            log.error("reaper failed", err=repr(e))
         await asyncio.sleep(interval_seconds)
 
 
@@ -313,7 +313,7 @@ async def session_reaper_loop() -> None:
         except asyncio.CancelledError:
             break
         except Exception as e:
-            log.error("session reaper failed", err=str(e))
+            log.error("session reaper failed", err=repr(e))
         await asyncio.sleep(60)
 
 

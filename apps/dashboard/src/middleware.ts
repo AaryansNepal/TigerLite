@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_PATHS = ["/signin", "/signup", "/auth", "/api/slack/events"];
+const PUBLIC_PATHS = ["/", "/signin", "/signup", "/auth", "/api/slack/events"];
 
 export async function middleware(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -36,7 +36,7 @@ export async function middleware(request: NextRequest) {
     url.pathname = "/signin";
     return NextResponse.redirect(url);
   }
-  if (user && (path === "/signin" || path === "/signup")) {
+  if (user && (path === "/" || path === "/signin" || path === "/signup")) {
     const url = request.nextUrl.clone();
     url.pathname = "/home";
     return NextResponse.redirect(url);
