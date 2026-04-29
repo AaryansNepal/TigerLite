@@ -9,6 +9,7 @@ endpoints (and the endpoints validate too).
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import Awaitable, Callable, TypeVar
 
 import asyncpg
@@ -19,6 +20,28 @@ from .config import get_settings
 log = structlog.get_logger(__name__)
 
 _pool: asyncpg.Pool | None = None
+
+
+async def _init_connection(conn: asyncpg.Connection) -> None:
+    """Per-connection setup. Most importantly: register a JSONB codec so
+    asyncpg auto-decodes JSON/JSONB columns to Python dicts. Without this,
+    asyncpg returns those columns as strings and call sites have to
+    json.loads everywhere — the cause of an `AttributeError: 'str' object
+    has no attribute 'get'` in the agent compiler when iterating
+    connections.config.
+    """
+    await conn.set_type_codec(
+        "jsonb",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
+    await conn.set_type_codec(
+        "json",
+        encoder=json.dumps,
+        decoder=json.loads,
+        schema="pg_catalog",
+    )
 
 
 async def get_pool() -> asyncpg.Pool:
@@ -34,6 +57,8 @@ async def get_pool() -> asyncpg.Pool:
             # Each query has 15s ceiling. Bigger and the user feels it as
             # "the page hung."
             command_timeout=15,
+            # Auto-decode JSONB to Python dicts (default would return str).
+            init=_init_connection,
             # How long to wait when acquiring a connection from the pool
             # before giving up. Default is 60s which is way too long; we'd
             # rather fail fast and let the retry decorator handle transient.
