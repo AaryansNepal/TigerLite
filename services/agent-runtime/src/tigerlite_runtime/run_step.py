@@ -123,7 +123,12 @@ async def run_one_step(snapshot_id: str) -> str | None:
     )
 
     if is_terminal:
-        outcome = _infer_outcome(new_objects)
+        # Walk the FULL session, not just this step's new_objects: a
+        # `record_finding` or `create_issue` call from an earlier step still
+        # makes the outcome `issue_found`. The previous bug looked only at
+        # `new_objects` (the terminal step) and so misclassified investigations
+        # whose terminal turn was a plain text recap as `no_issues`.
+        outcome = _infer_outcome(objects + new_objects)
         await _finalize_session(session_id, status="done", outcome=outcome, pool=pool)
         await session_finalizer.finalize(session_id, pool=pool)
         raise TerminalSignal()

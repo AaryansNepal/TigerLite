@@ -44,6 +44,9 @@ async def get_pool() -> asyncpg.Pool:
             max_size=5,
             command_timeout=30,
             init=_init_connection,
+            # Required for the Supabase transaction pooler (port 6543):
+            # prepared statements aren't safe across pooled backends.
+            statement_cache_size=0,
             server_settings={"application_name": "tigerlite-agent-runtime"},
         )
         log.info("postgres pool created (runtime)")

@@ -47,6 +47,16 @@ Tenant: {tenant_name}
 
 ## Available tables (DuckDB, tenant-scoped)
 
+**!!! Common SQL pitfalls — read this before writing any query !!!**
+There is NO column called `timestamp` in any of these tables. Use:
+  - `start_time` (and `end_time`) for **traces**
+  - `time` for **logs** and **metrics**
+A query like `WHERE timestamp > now() - INTERVAL '5 minute'` is wrong and
+will fail with "Referenced column 'timestamp' not found". Other reliable
+mistakes to avoid: `status_code` is Pascal-case ('Error'/'Ok'/'Unset'),
+not 'ERROR'/'OK'; the interval syntax is `INTERVAL N MINUTE` (no quotes,
+no plural).
+
 **traces** — one row per span. The most useful table for latency / errors.
   start_time TIMESTAMP, end_time TIMESTAMP, duration_ms DOUBLE,
   service_name VARCHAR, span_name VARCHAR, span_kind VARCHAR,

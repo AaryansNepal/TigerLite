@@ -71,6 +71,18 @@ async def create_agent(req: AgentCreateRequest, ctx: CurrentUser) -> Any:
         return {"clarifying_questions": compiled.clarifying_questions}
 
     cfg = compiled.config
+
+    # Resolve connection FKs from the channel/repo strings the compiler chose.
+    # The chat-driven create flow doesn't send slack_connection_id /
+    # github_connection_id, so without this the agent runtime can't find the
+    # bot token at run time and post_to_slack returns "no credentials".
+    slack_conn_id = req.slack_connection_id or _resolve_slack_connection_id(
+        slack_channels, cfg.slack_channel
+    )
+    github_conn_id = req.github_connection_id or _resolve_github_connection_id(
+        github_repos, cfg.github_repo
+    )
+
     async with pool.acquire() as conn:
         row = await conn.fetchrow(
             """
@@ -99,13 +111,56 @@ async def create_agent(req: AgentCreateRequest, ctx: CurrentUser) -> Any:
             json.dumps(cfg.scope_config),
             cfg.schedule_cron,
             cfg.anomaly_enabled,
-            req.slack_connection_id,
+            slack_conn_id,
             cfg.slack_channel,
-            req.github_connection_id,
+            github_conn_id,
             cfg.github_repo,
             json.dumps(req.transcript or []),
         )
     return _row_to_agent(row)
+
+
+def _resolve_slack_connection_id(rows: list[Any], channel: str | None) -> Any | None:
+    if not rows:
+        return None
+    if channel:
+        for r in rows:
+            cfg_obj = _as_dict(dict(r).get("config")) or {}
+            if cfg_obj.get("channel") == channel:
+                return r["id"]
+    if len(rows) == 1:
+        return rows[0]["id"]
+    return None
+
+
+def _resolve_github_connection_id(rows: list[Any], repo_full_name: str | None) -> Any | None:
+    if not rows:
+        return None
+    if repo_full_name:
+        for r in rows:
+            cfg_obj = _as_dict(dict(r).get("config")) or {}
+            if cfg_obj.get("repo_full_name") == repo_full_name:
+                return r["id"]
+            if repo_full_name in (cfg_obj.get("repos") or []):
+                return r["id"]
+    if len(rows) == 1:
+        return rows[0]["id"]
+    return None
+
+
+def _as_dict(v: Any) -> dict[str, Any] | None:
+    """Tolerate JSONB rows that historically came back as a JSON string."""
+    if v is None:
+        return None
+    if isinstance(v, dict):
+        return v
+    if isinstance(v, str):
+        try:
+            parsed = json.loads(v)
+        except (ValueError, TypeError):
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
 
 
 @router.get("", response_model=list[Agent])

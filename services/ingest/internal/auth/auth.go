@@ -22,6 +22,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"golang.org/x/crypto/bcrypt"
 )
@@ -44,7 +45,17 @@ type cachedEntry struct {
 }
 
 func New(ctx context.Context, dbURL string) (*Authenticator, error) {
-	pool, err := pgxpool.New(ctx, dbURL)
+	cfg, err := pgxpool.ParseConfig(dbURL)
+	if err != nil {
+		return nil, fmt.Errorf("pgx parse config: %w", err)
+	}
+	// Required for the Supabase transaction pooler (port 6543): the pooler
+	// multiplexes a client's transactions across different backend
+	// connections, so prepared statements (extended query protocol) leak
+	// across them and pgx fails with "prepared statement does not exist".
+	// Force the simple protocol — slightly less efficient, but correct.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("pgx pool: %w", err)
 	}

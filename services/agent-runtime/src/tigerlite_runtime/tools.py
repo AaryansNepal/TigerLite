@@ -376,7 +376,28 @@ async def _query_telemetry(
         json={"tenant_id": ctx.tenant_id, "sql": args["sql"], "artifact": True},
         timeout=settings.agent_tool_timeout_seconds,
     )
-    resp.raise_for_status()
+    if resp.status_code >= 400:
+        # Don't raise — surface the actual DuckDB binder/parser error to the
+        # agent so it can self-correct on the next turn (e.g. column name
+        # hallucinations like `timestamp` instead of `time`/`start_time`).
+        body: Any
+        try:
+            body = resp.json()
+        except Exception:
+            body = resp.text
+        detail = body.get("detail") if isinstance(body, dict) else body
+        return {
+            "error": "query failed",
+            "status": resp.status_code,
+            "detail": str(detail)[:1500],
+            "hint": (
+                "DuckDB binder error usually means a wrong column name. "
+                "Common fixes: logs uses `time` (not `timestamp`); traces "
+                "uses `start_time`/`end_time` (not `timestamp`); status_code "
+                "values are Pascal-case ('Error'/'Ok'/'Unset'). Re-read the "
+                "schema in your system prompt and retry."
+            ),
+        }
     return resp.json()
 
 

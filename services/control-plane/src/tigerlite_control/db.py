@@ -79,9 +79,14 @@ async def get_pool() -> asyncpg.Pool:
             command_timeout=15,
             # Auto-decode JSONB to Python dicts (default would return str).
             init=_init_connection,
-            # How long to wait when acquiring a connection from the pool
-            # before giving up. Default is 60s which is way too long; we'd
-            # rather fail fast and let the retry decorator handle transient.
+            # Disable asyncpg's prepared-statement cache. Required when the
+            # DSN points at the Supabase **transaction** pooler (port 6543):
+            # in transaction mode the pooler multiplexes a client's
+            # transactions across different backend connections, so a
+            # prepared statement created on backend A is invisible on
+            # backend B and asyncpg fails with
+            #   `prepared statement "__asyncpg_stmt_X__" does not exist`.
+            statement_cache_size=0,
             server_settings={"application_name": "tigerlite-control-plane"},
         )
         log.info("postgres pool created", max_size=25)
